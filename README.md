@@ -151,18 +151,54 @@
 
 - 무선 네트워크 환경에 특화된 확장 가능한 설계
 
-## 🚀 향후 계획
+## 📁 프로젝트 구조
 
-- 작성란
+```
+traffic-resource-allocation/
+├─ main.py
+├─ config.py
+├─ README.md
+├─ data/
+│   ├─ raw/
+│   └─ processed/
+├─ preprocessing/
+├─ models/
+├─ train/
+├─ utils/
+└─ artifacts/
+```
 
 ---
+
+## ▶️ 실행 방법 (One-Command Pipeline)
+
+```bash
+python main.py --check_npz --label_mode next_step --epochs 20
+```
+
+---
+
+## 📊 학습 결과
+
+- 최적 모델 저장 위치:
+```
+artifacts/ys_alloc_net.pt
+```
+
+---
+
+## 🚀 향후 계획
+
+- 예측 기반 자원 할당 모델과의 성능 비교
+- 공정성 제약(Fairness penalty) 포함 모델 확장
+- 실시간 무선 네트워크 환경 적용
 
 ## 📂 프로젝트 진행 현황
 
 - [x] 프로젝트 주제 선정
-- [ ] 개발 환경 구성
-- [ ] 트래픽 데이터 수집
-- [ ] 딥러닝 모델 설계 및 학습
-- [ ] 성능 평가 및 분석
+- [x] 개발 환경 구성
+- [x] 트래픽 데이터 수집
+- [x] 딥러닝 모델 설계 및 학습
+- [x] 성능 평가 및 분석
 - [ ] 최종 보고서 작성
 
