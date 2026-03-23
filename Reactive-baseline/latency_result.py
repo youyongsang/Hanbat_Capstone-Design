@@ -16,5 +16,5 @@ plt.ylabel("Latency (ms)")
 plt.title("Latency Over Time")
 plt.legend()
 
-plt.show()
 plt.savefig("latency_graph.png", dpi=300, bbox_inches="tight")
+plt.show()
