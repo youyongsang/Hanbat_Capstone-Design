@@ -1,4 +1,3 @@
-
 import asyncio
 import csv
 import statistics
@@ -9,9 +8,11 @@ from pathlib import Path
 import aiohttp
 
 
-CSV_PATH = "sale_event_traffic.csv"
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+CSV_PATH = BASE_DIR / "data/input/sale_event_traffic.csv"
 TARGET_URL = "http://localhost:8000/work"
-OUTPUT_LOG = "loadgen_result.csv"
+OUTPUT_LOG = BASE_DIR / "data/output/loadgen_result.csv"
 
 # 요청 타임아웃(초)
 REQUEST_TIMEOUT = 5
@@ -55,7 +56,7 @@ def percentile(values, p):
     return d0 + d1
 
 
-def load_schedule(csv_path: str):
+def load_schedule(csv_path: Path):
     rows = []
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -72,12 +73,14 @@ def load_schedule(csv_path: str):
     return rows
 
 
-async def run_schedule(csv_path: str, target_url: str, output_log: str):
+async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
     schedule = load_schedule(csv_path)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
     headers = {"User-Agent": "capstone-loadgen/1.0"}
+
+    output_log.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_log, "w", newline="", encoding="utf-8") as out:
         writer = csv.writer(out)
@@ -149,11 +152,11 @@ async def run_schedule(csv_path: str, target_url: str, output_log: str):
 
 
 def main():
-    csv_path = sys.argv[1] if len(sys.argv) > 1 else CSV_PATH
+    csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else CSV_PATH
     target_url = sys.argv[2] if len(sys.argv) > 2 else TARGET_URL
-    output_log = sys.argv[3] if len(sys.argv) > 3 else OUTPUT_LOG
+    output_log = Path(sys.argv[3]) if len(sys.argv) > 3 else OUTPUT_LOG
 
-    if not Path(csv_path).exists():
+    if not csv_path.exists():
         print(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
         sys.exit(1)
 
