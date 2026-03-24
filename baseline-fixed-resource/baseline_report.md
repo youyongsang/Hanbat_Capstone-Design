@@ -1,81 +1,167 @@
-# 트래픽 부하 기반 Baseline 실험 보고서
+# Baseline Fixed CPU Resource Experiment Analysis
 
 ## 1. 실험 목적
 
-본 실험의 목적은 시나리오 기반 트래픽을 서버에 적용하여, 고정된 자원 환경에서 시스템의 성능 변화를 관찰하는 것이다.  
-특히 트래픽 증가에 따른 요청 처리 성공률과 응답 지연 시간을 분석함으로써, 동적 자원 할당 기법의 필요성을 검증하는 것을 목표로 한다.
+본 실험은 고정된 CPU 자원 환경에서 시스템의 성능 한계를 분석하기 위해 수행되었다.  
+동일한 트래픽 패턴을 입력하면서 CPU 자원을 제한하여 처리량, 실패율, 지연시간 변화를 관찰한다.
 
 ---
 
 ## 2. 실험 환경
 
-- 트래픽 입력: 시나리오 기반 CSV 데이터 (1초 단위 RPS)
-- 부하 생성기: Python 기반 load generator (aiohttp)
-- 서버: FastAPI 기반 테스트 서버
-- 자원 상태: CPU 고정 (Baseline)
-- 측정 지표:
-  - 요청 처리 성공 수 (success_count)
-  - 요청 처리 실패 수 (fail_count)
-  - 평균 응답 시간 (avg_latency_ms)
-  - p95 응답 시간 (p95_latency_ms)
+- Application: baseline server
+- Load Pattern: `sale_event_traffic.csv`
+- CPU 제한:
+  - 0.5
+  - 1.0
+  - 1.5
 
 ---
 
-## 3. 실험 방법
-
-1. 시나리오 기반 트래픽 데이터를 CSV 형태로 정의한다.
-2. load generator를 통해 시간별 target_rps에 따라 서버에 요청을 발생시킨다.
-3. 각 요청에 대해 성공 여부 및 응답 시간을 기록한다.
-4. 결과를 기반으로 시간에 따른 성능 변화를 분석한다.
+## 3. 결과 분석
 
 ---
 
-## 4. 결과 분석
+### 3.1 CPU 0.5
 
-### 4.1 RPS 대비 요청 처리 결과
+#### Success / Fail
 
-![RPS vs Success/Fail](./success_fail_graph.png)
+![CPU 0.5 Success Fail](./success_fail_graph_cpu_0.5.png)
 
-- 초기 구간에서는 success_count가 target_rps와 거의 동일하게 유지되며 실패 요청이 발생하지 않는다.
-- 트래픽이 증가함에 따라 success_count는 증가하지만 일정 수준 이후 포화 상태에 도달한다.
-- 이후 추가 요청은 fail_count 증가로 나타난다.
+- 약 400 RPS 이후부터 실패 급증
+- 성공 처리량은 약 100~140 수준에서 포화
+- 시스템이 빠르게 한계 도달
+
+#### Latency
+
+![CPU 0.5 Latency](./latency_graph_cpu_0.5.png)
+
+- 평균 latency 약 5500ms
+- P95 latency 6000ms 근접
+- 심각한 큐잉 발생
 
 #### 해석
 
-서버의 처리 한계를 초과하는 시점이 존재하며, 자원이 고정된 상태에서는 트래픽 증가에 대응하지 못함을 의미한다.
+- CPU 부족으로 인한 명확한 병목
+- 처리 가능한 최대 RPS ≈ 120
 
 ---
 
-### 4.2 Latency 변화 분석
+### 3.2 CPU 1.0
 
-![Latency Graph](./latency_graph.png)
+#### Success / Fail
 
-- 트래픽이 낮은 구간에서는 avg_latency와 p95_latency가 낮게 유지된다.
-- 트래픽 증가에 따라 두 지표 모두 증가한다.
-- 특히 peak 구간에서 p95 latency가 급격히 증가한다.
+![CPU 1.0 Success Fail](./success_fail_graph_cpu_1.0.png)
+
+- 성공 처리량 약 350~380 수준
+- 실패 감소했지만 여전히 존재
+- 중간 구간에서 부분적인 과부하
+
+#### Latency
+
+![CPU 1.0 Latency](./latency_graph_cpu_1.0.png)
+
+- 평균 latency 약 4500ms
+- P95 latency 여전히 높음
 
 #### 해석
 
-p95 latency 증가는 일부 요청이 매우 느려지는 현상을 의미하며, 이는 시스템 과부하 상태를 나타낸다.
+- CPU 증가로 성능 약 3배 개선
+- 하지만 saturation 여전히 존재
 
 ---
 
-## 5. 종합 분석
+### 3.3 CPU 1.5
 
-1. 서버는 일정 수준 이상의 트래픽에서 처리 한계에 도달한다.
-2. 처리 한계를 초과하면 요청 실패가 발생한다.
-3. 과부하 상태에서는 응답 지연이 크게 증가한다.
-4. p95 latency는 성능 저하를 민감하게 반영한다.
+#### Success / Fail
+
+![CPU 1.5 Success Fail](./success_fail_graph_cpu_1.5.png)
+
+- 성공 처리량 약 380~420
+- 실패율 추가 감소
+- 가장 안정적인 상태
+
+#### Latency
+
+![CPU 1.5 Latency](./latency_graph_cpu_1.5.png)
+
+- 평균 latency 약 4300ms
+- P95 latency 일부 개선
+
+#### 해석
+
+- 성능 향상은 있지만 증가폭 감소
+- CPU 외 병목 존재 가능성
 
 ---
 
-## 6. 결론
+## 4. 핵심 인사이트
 
-본 실험은 고정된 자원 환경에서 트래픽 증가에 따른 성능 저하를 확인한 baseline 실험이다.  
-이를 통해 동적 자원 할당 방식(reactive 또는 predictive)의 필요성을 확인할 수 있다.
+### 4.1 CPU vs 처리량
+
+| CPU | Max Success |
+|-----|------------|
+| 0.5 | ~120 RPS |
+| 1.0 | ~370 RPS |
+| 1.5 | ~400 RPS |
+
+- CPU 증가 → 처리량 증가
+- 하지만 1.0 이후부터 증가폭 감소
 
 ---
 
-## 7. 한 줄 요약
+### 4.2 실패 패턴
 
-트래픽 증가 시 서버는 처리 한계에 도달하며, 이후 요청 실패와 응답 지연이 발생한다.
+- CPU 낮을수록:
+  - 실패 빠르게 발생
+  - 실패 비율 높음
+
+- CPU 높을수록:
+  - 더 오래 버팀
+  - 실패 늦게 발생
+
+---
+
+### 4.3 Latency 특징
+
+- 부하 증가 시 latency 급증
+- P95는 항상 높은 상태 유지
+- 요청이 큐에 쌓이는 구조
+
+---
+
+## 5. 결론
+
+- CPU는 성능에 직접적인 영향을 준다
+- 하지만 고정 자원 환경에서는 한계 존재
+- 트래픽 증가 시:
+  - 실패 증가
+  - latency 증가
+  - 서비스 품질 저하
+
+---
+
+## 6. Reactive 필요성
+
+본 실험 결과는 다음을 보여준다:
+
+> 고정된 자원으로는 변동 트래픽을 처리할 수 없다
+
+따라서 필요:
+
+- Auto Scaling
+- Backpressure
+- Reactive Architecture
+
+---
+
+## 7. 다음 단계
+
+- Reactive 서버 구현
+- 동일 조건 비교 실험
+
+---
+
+## 한 줄 요약
+
+> CPU를 늘리면 성능은 증가하지만, 고정 자원 구조에서는 결국 한계가 존재한다.

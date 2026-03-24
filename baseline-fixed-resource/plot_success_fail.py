@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # CSV 읽기
-df = pd.read_csv("loadgen_result.csv")
+df = pd.read_csv("result_cpu_1_5.csv")
 
 plt.figure()
 
@@ -19,5 +19,5 @@ plt.ylabel("Count")
 plt.title("RPS vs Success/Fail Over Time")
 plt.legend()
 
-plt.savefig("success_fail_graph.png", dpi=300, bbox_inches="tight")
+plt.savefig("success_fail_graph_cpu_1.5.png", dpi=300, bbox_inches="tight")
 plt.show()

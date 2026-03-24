@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv("loadgen_result.csv")
+df = pd.read_csv("result_cpu_1_5.csv")
 
 plt.figure(figsize=(10, 5))
 
@@ -16,5 +16,5 @@ plt.ylabel("Latency (ms)")
 plt.title("Latency Over Time")
 plt.legend()
 
-plt.savefig("latency_graph.png", dpi=300, bbox_inches="tight")
+plt.savefig("latency_graph_cpu_1.5.png", dpi=300, bbox_inches="tight")
 plt.show()
