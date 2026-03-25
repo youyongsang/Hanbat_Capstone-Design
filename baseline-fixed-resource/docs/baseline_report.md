@@ -26,7 +26,7 @@
 
 #### Success / Fail
 
-![CPU 0.5 Success Fail](./success_fail_graph_cpu_0.5.png)
+![CPU 0.5 Success Fail](../results/success_fail_graph_cpu_0.5.png)
 
 - 약 400 RPS 이후부터 실패 급증
 - 성공 처리량은 약 100~140 수준에서 포화
@@ -34,7 +34,7 @@
 
 #### Latency
 
-![CPU 0.5 Latency](./latency_graph_cpu_0.5.png)
+![CPU 0.5 Latency](../results/latency_graph_cpu_0.5.png)
 
 - 평균 latency 약 5500ms
 - P95 latency 6000ms 근접
@@ -51,7 +51,7 @@
 
 #### Success / Fail
 
-![CPU 1.0 Success Fail](./success_fail_graph_cpu_1.0.png)
+![CPU 1.0 Success Fail](../results/success_fail_graph_cpu_1.0.png)
 
 - 성공 처리량 약 350~380 수준
 - 실패 감소했지만 여전히 존재
@@ -59,7 +59,7 @@
 
 #### Latency
 
-![CPU 1.0 Latency](./latency_graph_cpu_1.0.png)
+![CPU 1.0 Latency](../results/latency_graph_cpu_1.0.png)
 
 - 평균 latency 약 4500ms
 - P95 latency 여전히 높음
@@ -75,7 +75,7 @@
 
 #### Success / Fail
 
-![CPU 1.5 Success Fail](./success_fail_graph_cpu_1.5.png)
+![CPU 1.5 Success Fail](../results/success_fail_graph_cpu_1.5.png)
 
 - 성공 처리량 약 380~420
 - 실패율 추가 감소
@@ -83,7 +83,7 @@
 
 #### Latency
 
-![CPU 1.5 Latency](./latency_graph_cpu_1.5.png)
+![CPU 1.5 Latency](../results/latency_graph_cpu_1.5.png)
 
 - 평균 latency 약 4300ms
 - P95 latency 일부 개선
