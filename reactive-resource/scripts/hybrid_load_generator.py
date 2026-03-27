@@ -1,8 +1,10 @@
 import asyncio
 import csv
 import statistics
+import subprocess
 import sys
 import time
+from itertools import cycle
 from pathlib import Path
 
 import aiohttp
@@ -11,34 +13,73 @@ import aiohttp
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 CSV_PATH = BASE_DIR / "data/input/sale_event_traffic.csv"
-TARGET_URL = "http://localhost:8000/work"
 OUTPUT_LOG = BASE_DIR / "data/output/loadgen_result.csv"
 
 # -------------------------
 # 실험 파라미터
 # -------------------------
-
-# 요청 전체 타임아웃(초)
-# 이 시간을 넘기면 aiohttp exception으로 처리되어 fail_count에 반영됨
 REQUEST_TIMEOUT = 5
-
-# 응답은 왔더라도, 이 시간(ms)을 넘으면 "품질 실패"로 간주
-# 즉, HTTP 200이어도 너무 느리면 fail 처리
 SLA_LATENCY_MS = 2000
-
-# 동시에 너무 많은 요청이 몰려 프로그램 자체가 불안정해지는 걸 방지
 MAX_CONCURRENCY = 1000
+
+# 컨테이너/포트 규칙
+CONTAINER_PREFIX = "app_server_"
+BASE_PORT = 8001
+MAX_REPLICAS = 5
+
+
+def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def get_active_ports() -> list[int]:
+    """
+    현재 실행 중인 app_server_i 컨테이너를 확인하고,
+    대응되는 포트(8001, 8002, 8003...) 목록 반환
+    """
+    result = run_cmd(["docker", "ps", "--format", "{{.Names}}"])
+
+    if result.returncode != 0:
+        print("[WARN] docker ps 실패, 포트 조회 불가")
+        return []
+
+    ports = []
+
+    for name in result.stdout.splitlines():
+        if name.startswith(CONTAINER_PREFIX):
+            try:
+                idx = int(name.split("_")[-1])
+                if 1 <= idx <= MAX_REPLICAS:
+                    ports.append(BASE_PORT + (idx - 1))
+            except ValueError:
+                continue
+
+    ports.sort()
+    return ports
+
+
+def build_round_robin_urls(active_ports: list[int], request_count: int) -> list[str]:
+    """
+    활성 포트 목록을 기반으로 round-robin 순서의 URL 리스트 생성
+    예:
+    active_ports = [8001, 8002, 8003], request_count = 8
+    -> 8001,8002,8003,8001,8002,8003,8001,8002
+    """
+    if not active_ports or request_count <= 0:
+        return []
+
+    port_cycle = cycle(active_ports)
+    return [f"http://localhost:{next(port_cycle)}/work" for _ in range(request_count)]
 
 
 async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asyncio.Semaphore):
     """
-    단일 요청 전송 함수
+    단일 요청 전송
 
-    성공 기준:
-    1) HTTP 상태 코드가 2xx~3xx
-    2) latency_ms <= SLA_LATENCY_MS
-
-    위 조건 둘 다 만족해야 ok=True
+    구분 기준:
+    - ok: HTTP 요청 자체가 성공했는가 (2xx~3xx)
+    - sla_violation: 성공은 했지만 SLA 시간 초과인가
+    - fail: 이 함수 안에서는 ok=False 인 경우가 나중에 fail_count로 집계됨
     """
     async with sem:
         start = time.perf_counter()
@@ -48,14 +89,19 @@ async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asynci
                 latency_ms = (time.perf_counter() - start) * 1000.0
 
                 http_ok = 200 <= resp.status < 400
-                sla_ok = latency_ms <= SLA_LATENCY_MS
-                ok = http_ok and sla_ok
+
+                # 진짜 성공 여부: HTTP 정상 응답이면 성공
+                ok = http_ok
+
+                # SLA 위반 여부: 응답은 성공했지만 너무 느린 경우
+                sla_violation = http_ok and (latency_ms > SLA_LATENCY_MS)
 
                 return {
                     "ok": ok,
                     "status": resp.status,
                     "latency_ms": latency_ms,
-                    "sla_violation": http_ok and not sla_ok,
+                    "sla_violation": sla_violation,
+                    "url": url,
                 }
 
         except Exception:
@@ -65,14 +111,11 @@ async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asynci
                 "status": "EXCEPTION",
                 "latency_ms": latency_ms,
                 "sla_violation": False,
+                "url": url,
             }
 
 
 def percentile(values, p):
-    """
-    간단한 percentile 계산 함수
-    p=0.95 이면 p95 latency 계산
-    """
     if not values:
         return 0.0
 
@@ -90,14 +133,6 @@ def percentile(values, p):
 
 
 def load_schedule(csv_path: Path):
-    """
-    트래픽 시나리오 CSV 로드
-    필수 컬럼:
-    - time_sec
-    - target_rps
-    - scenario
-    - phase
-    """
     rows = []
 
     with open(csv_path, "r", encoding="utf-8") as f:
@@ -118,10 +153,7 @@ def load_schedule(csv_path: Path):
     return rows
 
 
-async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
-    """
-    CSV 스케줄에 따라 초 단위로 target_rps만큼 요청 전송
-    """
+async def run_schedule(csv_path: Path, output_log: Path):
     schedule = load_schedule(csv_path)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
@@ -141,6 +173,7 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
             "sla_violation_count",
             "avg_latency_ms",
             "p95_latency_ms",
+            "active_ports",
             "scenario",
             "phase",
         ])
@@ -152,7 +185,6 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
                 target_sec = row["time_sec"]
                 target_rps = row["target_rps"]
 
-                # 해당 초까지 대기
                 while True:
                     elapsed = time.perf_counter() - exp_start
                     if elapsed >= target_sec:
@@ -161,21 +193,52 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
 
                 second_start = time.perf_counter()
 
-                # target_rps만큼 요청 생성
+                active_ports = get_active_ports()
+
+                if not active_ports:
+                    print(
+                        f"[t={row['time_sec']:>4}] "
+                        f"활성 컨테이너 없음 - 요청 전송 불가"
+                    )
+                    writer.writerow([
+                        row["time_sec"],
+                        row["target_rps"],
+                        0,
+                        0,
+                        0,
+                        0,
+                        0.0,
+                        0.0,
+                        "",
+                        row["scenario"],
+                        row["phase"],
+                    ])
+                    out.flush()
+                    continue
+
+                # round-robin 방식으로 URL 목록 생성
+                urls = build_round_robin_urls(active_ports, target_rps)
+
                 tasks = [
-                    asyncio.create_task(send_one_request(session, target_url, sem))
-                    for _ in range(target_rps)
+                    asyncio.create_task(send_one_request(session, url, sem))
+                    for url in urls
                 ]
 
                 results = await asyncio.gather(*tasks)
 
                 latencies = [r["latency_ms"] for r in results]
+
+                # 진짜 성공/실패 분리
                 success_count = sum(1 for r in results if r["ok"])
                 fail_count = len(results) - success_count
+
+                # 느린 성공만 따로 카운트
                 sla_violation_count = sum(1 for r in results if r["sla_violation"])
 
                 avg_latency = statistics.mean(latencies) if latencies else 0.0
                 p95_latency = percentile(latencies, 0.95) if latencies else 0.0
+
+                ports_str = ",".join(str(p) for p in active_ports)
 
                 writer.writerow([
                     row["time_sec"],
@@ -186,6 +249,7 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
                     sla_violation_count,
                     round(avg_latency, 2),
                     round(p95_latency, 2),
+                    ports_str,
                     row["scenario"],
                     row["phase"],
                 ])
@@ -202,6 +266,7 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
                     f"sla_fail={sla_violation_count:>4} "
                     f"avg={avg_latency:>7.2f}ms "
                     f"p95={p95_latency:>7.2f}ms "
+                    f"ports={ports_str} "
                     f"phase={row['phase']} "
                     f"(spent {spent:.2f}s)"
                 )
@@ -209,15 +274,14 @@ async def run_schedule(csv_path: Path, target_url: str, output_log: Path):
 
 def main():
     csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else CSV_PATH
-    target_url = sys.argv[2] if len(sys.argv) > 2 else TARGET_URL
-    output_log = Path(sys.argv[3]) if len(sys.argv) > 3 else OUTPUT_LOG
+    output_log = Path(sys.argv[2]) if len(sys.argv) > 2 else OUTPUT_LOG
 
     if not csv_path.exists():
         print(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
         sys.exit(1)
 
     try:
-        asyncio.run(run_schedule(csv_path, target_url, output_log))
+        asyncio.run(run_schedule(csv_path, output_log))
     except KeyboardInterrupt:
         print("\n중단됨")
 
