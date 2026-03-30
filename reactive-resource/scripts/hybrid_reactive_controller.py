@@ -72,7 +72,8 @@ OUTPUT_CSV = Path("data/output/hybrid_reactive_result.csv")
 # Docker 헬퍼
 # =========================
 
-def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
+# 터미널 명령 실행 헬퍼
+def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess: 
     return subprocess.run(cmd, capture_output=True, text=True)
 
 

@@ -32,6 +32,7 @@ def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+# 현재 살아있는 포트 목록 조회 함수
 def get_active_ports() -> list[int]:
     """
     현재 실행 중인 app_server_i 컨테이너를 확인하고,
@@ -72,7 +73,7 @@ def build_round_robin_urls(active_ports: list[int], request_count: int) -> list[
     return [f"http://localhost:{next(port_cycle)}/work" for _ in range(request_count)]
 
 
-async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asyncio.Semaphore):
+async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asyncio.Semaphore): # 비동기 함수
     """
     단일 요청 전송
 
@@ -81,24 +82,24 @@ async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asynci
     - sla_violation: 성공은 했지만 SLA 시간 초과인가
     - fail: 이 함수 안에서는 ok=False 인 경우가 나중에 fail_count로 집계됨
     """
-    async with sem:
-        start = time.perf_counter()
+    async with sem: # 비동기 작업을 시작하고 종료하면 자동 close되는 컨텍스트 매니저
+        start = time.perf_counter() # 요청 보내기 직전 시간 기록
         try:
             async with session.get(url) as resp:
-                await resp.read()
-                latency_ms = (time.perf_counter() - start) * 1000.0
+                await resp.read() # http 응답 전체 읽기 (실제 네트워크 왕복 시간 측정 위해)
+                latency_ms = (time.perf_counter() - start) * 1000.0 # 읽는데 걸린 시간 계산
 
                 http_ok = 200 <= resp.status < 400
 
                 # 진짜 성공 여부: HTTP 정상 응답이면 성공
                 ok = http_ok
 
-                # SLA 위반 여부: 응답은 성공했지만 너무 느린 경우
-                sla_violation = http_ok and (latency_ms > SLA_LATENCY_MS)
+                # SLA 위반 여부: 응답은 성공했지만 너무 느린 경우, true false전달
+                sla_violation = http_ok and (latency_ms > SLA_LATENCY_MS) 
 
                 return {
                     "ok": ok,
-                    "status": resp.status,
+                    "status": resp.status, # 200, 500 등 HTTP 상태 코드
                     "latency_ms": latency_ms,
                     "sla_violation": sla_violation,
                     "url": url,
@@ -114,15 +115,15 @@ async def send_one_request(session: aiohttp.ClientSession, url: str, sem: asynci
                 "url": url,
             }
 
-
+# 단순히 p95 계산을 위해 백분위수 함수 구현
 def percentile(values, p):
     if not values:
         return 0.0
 
     values = sorted(values)
-    k = (len(values) - 1) * p
-    f = int(k)
-    c = min(f + 1, len(values) - 1)
+    k = (len(values) - 1) * p # 배열에서 p 퍼센트 위치에 해당하는 인덱스 계산
+    f = int(k) # k의 정수 부분 (아래값)
+    c = min(f + 1, len(values) - 1) # 보간을 위한 위값 인덱스, 배열 범위 넘어가지 않도록 조정
 
     if f == c:
         return values[f]
@@ -179,7 +180,7 @@ async def run_schedule(csv_path: Path, output_log: Path):
         ])
 
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            exp_start = time.perf_counter()
+            exp_start = time.perf_counter() # 실험 시작 시간 기록
 
             for row in schedule:
                 target_sec = row["time_sec"]
@@ -191,9 +192,9 @@ async def run_schedule(csv_path: Path, output_log: Path):
                         break
                     await asyncio.sleep(0.001)
 
-                second_start = time.perf_counter()
+                second_start = time.perf_counter() # 요청 보내기 시작 시간 기록
 
-                active_ports = get_active_ports()
+                active_ports = get_active_ports() # 현재 활성화된 포트 목록 조회
 
                 if not active_ports:
                     print(
@@ -217,16 +218,16 @@ async def run_schedule(csv_path: Path, output_log: Path):
                     continue
 
                 # round-robin 방식으로 URL 목록 생성
-                urls = build_round_robin_urls(active_ports, target_rps)
+                urls = build_round_robin_urls(active_ports, target_rps) # 요청 수 만큼 URL 리스트 생성 (포트 순환)
 
                 tasks = [
                     asyncio.create_task(send_one_request(session, url, sem))
                     for url in urls
                 ]
 
-                results = await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks) # 모든 요청이 완료될 때까지 대기
 
-                latencies = [r["latency_ms"] for r in results]
+                latencies = [r["latency_ms"] for r in results] # 모든 요청의 지연 시간 리스트
 
                 # 진짜 성공/실패 분리
                 success_count = sum(1 for r in results if r["ok"])
@@ -258,7 +259,7 @@ async def run_schedule(csv_path: Path, output_log: Path):
                 spent = time.perf_counter() - second_start
 
                 print(
-                    f"[t={row['time_sec']:>4}] "
+                    f"[t={row['time_sec']:>4}] " # 빈칸4자리 확보해서 시간 표시
                     f"target={row['target_rps']:>4} "
                     f"sent={len(results):>4} "
                     f"ok={success_count:>4} "
