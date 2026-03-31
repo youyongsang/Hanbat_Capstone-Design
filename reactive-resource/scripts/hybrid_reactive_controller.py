@@ -76,32 +76,34 @@ OUTPUT_CSV = Path("data/output/hybrid_reactive_result.csv")
 def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess: 
     return subprocess.run(cmd, capture_output=True, text=True)
 
-
+# 요청 실패 시 예외 발생
 def require_success(result: subprocess.CompletedProcess, context: str):
     if result.returncode != 0:
         raise RuntimeError(
             f"{context} failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
         )
 
-
+# 현재 컨테이너 네임 반환
 def container_name(index: int) -> str:
     return f"{CONTAINER_PREFIX}{index}"
 
-
+# 현재 컨테이너 포트 반환
 def host_port(index: int) -> int:
     return BASE_PORT + (index - 1)
 
-
+# 모든 컨테이너 이름 리스트 반환
 def list_all_container_names() -> list[str]:
     result = run_cmd(["docker", "ps", "-a", "--format", "{{.Names}}"])
+    # docker ps -a --format "{{.Names}}" 명령이 실패하면 예외 발생
+    # .Names는 docker ps의 Go 템플릿으로, 컨테이너 이름만 출력하도록 함.
     require_success(result, "docker ps -a")
     return result.stdout.splitlines()
 
-
+# 컨테이너 존재 여부 확인
 def container_exists(name: str) -> bool:
     return name in list_all_container_names()
 
-
+# 현재 실행 중인 컨테이너 이름 리스트 반환
 def running_container_names() -> list[str]:
     result = run_cmd(["docker", "ps", "--format", "{{.Names}}"])
     require_success(result, "docker ps")
