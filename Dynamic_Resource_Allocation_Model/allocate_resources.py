@@ -1,66 +1,81 @@
+# -*- coding: utf-8 -*-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
 
-# 1. 2,000 RPS Scale Traffic Data Generation
-# 실전과 유사한 대규모 트래픽(2,000 RPS) 시나리오를 생성합니다.
 np.random.seed(42)
 time = np.linspace(0, 100, 50000)
-# Base 500 + Peak 1500 + Noise를 조합하여 최대 2,000 RPS 구현
 raw_rps = 500 + 1500 * (np.sin(time) * 0.5 + 0.5) + np.random.normal(0, 50, 50000)
-raw_rps = np.maximum(raw_rps, 300) 
+raw_rps = raw_rps.reshape(-1, 1)
 
-# 2. Advanced EMA (Exponential Moving Average) Tracking
-# 트래픽의 급격한 변동(노이즈)을 거르고 흐름을 파악합니다.
-alpha = 0.15
-ema_rps = [raw_rps[0]]
-for i in range(1, len(raw_rps)):
-    ema_rps.append(alpha * raw_rps[i] + (1 - alpha) * ema_rps[-1])
-ema_rps = np.array(ema_rps)
+scaler = MinMaxScaler()
+scaled_rps = scaler.fit_transform(raw_rps)
 
-# 3. Scaling Configuration
-allocated_servers = []
-current_servers = 10
-MAX_SERVERS = 35 # 최대 2,800 RPS까지 수용 가능한 인프라 한계치
-SERVER_CAPACITY = 80 # 서버 1대당 처리 가능한 초당 요청 수(RPS)
+window_size = 12
+X, y = [], []
+for i in range(len(scaled_rps) - window_size):
+    X.append(scaled_rps[i:i+window_size])
+    y.append(scaled_rps[i+window_size])
+X, y = np.array(X), np.array(y)
 
-# 4. Resource Allocation Logic (Cost-Optimized)
-for i in range(len(ema_rps)):
-    # Margin 1.12: 자원 낭비(Over-provisioning)를 막기 위해 12%의 최소 여유만 유지
-    margin = 1.12
-    safe_rps = ema_rps[i] * margin
+train_size = int(len(X) * 0.8)
+X_train, y_train = X[:train_size], y[:train_size]
+X_test, y_test = X[train_size:], y[train_size:]
+
+model = Sequential([
+    LSTM(64, input_shape=(window_size, 1)),
+    Dense(32, activation="relu"),
+    Dense(1)
+])
+model.compile(optimizer='adam', loss='mse')
+
+print("Starting Production-Level LSTM Training (Epochs=20)...")
+model.fit(X_train, y_train, epochs=20, batch_size=64, verbose=1)
+
+predicted_scaled = model.predict(X_test)
+predicted_rps = scaler.inverse_transform(predicted_scaled).flatten()
+actual_rps = scaler.inverse_transform(y_test).flatten()
+
+mae = mean_absolute_error(actual_rps, predicted_rps)
+rmse = np.sqrt(mean_squared_error(actual_rps, predicted_rps))
+
+print("\n=== Model Evaluation Metrics ===")
+print(f"MAE: {mae:.2f} RPS")
+print(f"RMSE: {rmse:.2f} RPS")
+print("================================\n")
+
+allocated_resources = []
+current_containers = 25
+smoothed_capacity = current_containers * 80
+
+for p in predicted_rps:
+    safe_pred = p * 1.1
+    target_containers = max(5, int(np.ceil(safe_pred / 80)))
     
-    # 필요한 서버 수 계산 (소수점 올림 처리로 가용성 확보)
-    target_servers = int(np.ceil(safe_rps / SERVER_CAPACITY))
-    target_servers = min(target_servers, MAX_SERVERS)
-
-    # 불필요한 서버 On/Off 반복을 줄이면서 트래픽 곡선을 정밀하게 추적
-    if target_servers != current_servers:
-        current_servers = target_servers
+    if target_containers > current_containers:
+        current_containers = target_containers
+    elif target_containers < current_containers - 1:
+        current_containers = target_containers
         
-    allocated_servers.append(current_servers)
+    current_containers = min(current_containers, 35)
+    target_capacity = current_containers * 80
+    smoothed_capacity = 0.7 * smoothed_capacity + 0.3 * target_capacity
+    allocated_resources.append(smoothed_capacity)
 
-# 5. Result Visualization & Export
 plt.figure(figsize=(15, 6))
-plt.plot(raw_rps, label='Raw Traffic (Real-time)', color='lightgray', alpha=0.5)
-plt.plot(ema_rps, label='EMA Tracking (Trend)', color='blue', linewidth=1.5)
+plot_range = 1000 
+plt.plot(actual_rps[:plot_range], label='Actual Traffic', color='lightgray', alpha=0.7)
+plt.plot(predicted_rps[:plot_range], label=f'LSTM Predicted (MAE: {mae:.1f})', color='blue', linestyle='--', linewidth=1.5)
+plt.plot(allocated_resources[:plot_range], label='Smart Allocation (Production-Logic)', color='red', linewidth=2)
 
-# 서버 할당량 시각화 (Step 그래프로 인프라 변화 표현)
-plt.step(range(len(allocated_servers)), [s * SERVER_CAPACITY for s in allocated_servers], 
-         label='Cost-Optimized Resource (Allocation)', color='red', linewidth=2, where='post')
-
-# 2,000 RPS 타겟 라인 및 최대 용량 표시
-plt.axhline(y=2000, color='green', linestyle='--', label='Target 2000 RPS')
-plt.ylim(0, 3000) # 시각적 명확성을 위해 Y축 상한 설정
-
-plt.title('Enterprise Auto-Scaling: 2000 RPS & Cost Optimized Model')
-plt.ylabel('RPS / Capacity')
-plt.xlabel('Time Points (50k Samples)')
+plt.title('Final Production-Ready Auto-Scaling Model')
 plt.legend(loc='upper right')
 
-# 결과 저장
-if not os.path.exists('plots'):
-    os.makedirs('plots')
-plt.savefig('plots/rps_2000_final.png')
-print("--- [SUCCESS] allocate_resources.py updated with 2,000 RPS Optimized Model ---")
+if not os.path.exists('plots'): os.makedirs('plots')
+plt.savefig('plots/real_lstm_production_final.png')
+print("--- [SUCCESS] Production-Ready Model Created ---")
