@@ -1,45 +1,57 @@
 import numpy as np
+import pandas as pd
 import pickle
-import os
+import time
 from tensorflow.keras.models import load_model
-from resource_policy import allocate_resource
+from resource_policy import allocate_resource # 사용자님의 기존 정책 파일
 
-def run_simulation(recent_rps_sequence):
-    window_size = 12
+def run_realtime_simulation(test_rps_data):
+    """
+    test_rps_data: 실시간으로 들어오는 RPS 리스트 (최소 60개 이상)
+    """
+    window_size = 60
     
-    # 예외 처리: window_size 이하 데이터 유입 방어
-    if len(recent_rps_sequence) < window_size:
-        print(f"⚠️ 경고: 예측을 위해 최소 {window_size}개의 트래픽 데이터가 필요합니다. (현재: {len(recent_rps_sequence)}개)")
-        return None, None, None
+    # 1. 모델 및 스케일러 로드
+    try:
+        model = load_model('lstm_model.h5')
+        with open('scaler_x.pkl', 'rb') as f: sx = pickle.load(f)
+        with open('scaler_y.pkl', 'rb') as f: sy = pickle.load(f)
+    except Exception as e:
+        print(f"❌ 로드 에러: {e}")
+        return
 
-    # 최신 window_size 만큼만 슬라이싱
-    input_seq = recent_rps_sequence[-window_size:]
-
-    if not os.path.exists('lstm_model.h5') or not os.path.exists('scaler.pkl'):
-        raise FileNotFoundError("❌ 모델이나 스케일러가 없습니다.")
-
-    model = load_model('lstm_model.h5')
-    with open('scaler.pkl', 'rb') as f:
-        scaler = pickle.load(f)
-
-    # 차원 맞추기 및 정규화
-    input_data = np.array(input_seq).reshape(-1, 1)
-    scaled_input = scaler.transform(input_data)
-    model_input = scaled_input.reshape(1, window_size, 1)
-
-    pred_scaled = model.predict(model_input, verbose=0)
-    pred_rps = scaler.inverse_transform(pred_scaled)[0][0]
-
-    cpu, replicas = allocate_resource(pred_rps)
-
-    print("-" * 45)
-    print(f"📊 입력된 과거 {window_size}초 RPS: {input_seq}")
-    print(f"🔮 예측된 다음 1초 RPS: {pred_rps:.2f}")
-    print(f"⚙️  선제적 할당 정책: CPU {cpu} / 컨테이너 {replicas}개")
-    print("-" * 45)
+    print("🚀 실시간 오토스케일링 시뮬레이션 시작...")
     
-    return pred_rps, cpu, replicas
+    # 최근 데이터 60개가 확보되었을 때부터 예측 시작
+    if len(test_rps_data) < window_size:
+        print(f"⚠️ 데이터 부족: {len(test_rps_data)}/{window_size}")
+        return
+
+    # 2. [중요] 실시간 데이터를 학습 규격(3개 Feature)으로 가공
+    df = pd.DataFrame(test_rps_data, columns=['target_rps'])
+    df['moving_avg'] = df['target_rps'].rolling(window=10).mean()
+    df['diff'] = df['target_rps'].diff().fillna(0).rolling(window=3).mean()
+    
+    # 동적 클리핑 (학습 때와 동일한 로직 권장이나 여기선 간단히 처리)
+    df = df.ffill().bfill()
+    
+    # 최신 윈도우 추출
+    recent_features = df[['target_rps', 'moving_avg', 'diff']].values[-window_size:]
+
+    # 3. 스케일링 및 예측
+    input_scaled = sx.transform(recent_features).reshape(1, window_size, 3)
+    pred_scaled = model.predict(input_scaled, verbose=0)
+    
+    # 4. RPS 복원
+    predicted_rps = sy.inverse_transform(pred_scaled)[0][0]
+
+    # 5. [상호작용] 기존 자원 할당 정책 호출
+    cpu, replicas = allocate_resource(predicted_rps)
+
+    print(f"🔮 [예측] {predicted_rps:.1f} RPS | ⚙️ [할당] CPU: {cpu}, Replicas: {replicas}")
+    return predicted_rps, cpu, replicas
 
 if __name__ == "__main__":
-    test_sequence = [90, 95, 100, 110, 130, 150, 180, 220, 270, 320, 380, 410]
-    run_simulation(test_sequence)
+    # 시뮬레이션용 가짜 데이터 (90개)
+    dummy_history = np.random.randint(80, 120, 90).tolist()
+    run_realtime_simulation(dummy_history)
