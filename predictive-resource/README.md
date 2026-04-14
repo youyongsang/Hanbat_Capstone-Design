@@ -23,18 +23,20 @@ predictive-resource/
 ├── app/
 │   └── app.py                          # FastAPI 서버 (reactive-resource와 동일)
 ├── data/
-│   ├── input/
-│   │   └── sale_event_traffic.csv      # 트래픽 시나리오
-│   └── output/
-│       ├── predictive_allocation_plan.csv   # 예측 레이어 로그
-│       └── hybrid_correction_log.csv        # 보정 레이어 로그
-├── results/                            # 시각화 결과 PNG
+│   └── input/
+│       └── sale_event_traffic.csv      # 트래픽 시나리오
+├── model/
+│   ├── preprocess_lstm.py              # 데이터 전처리
+│   ├── train_lstm.py                   # LSTM 모델 학습
+│   ├── lstm_model.h5                   # 학습 후 생성
+│   └── scaler.pkl                      # 학습 후 생성
+├── results/                            # 시각화 결과 PNG (실행 후 생성)
 ├── scripts/
 │   ├── predictive_allocator.py         # Layer A: LSTM 예측 + 선제 할당
 │   ├── hybrid_controller.py            # Layer B: 실시간 보정
 │   ├── run_hybrid.py                   # 진입점 (두 레이어 동시 구동)
 │   ├── hybrid_load_generator.py        # 로드 생성기 (reactive-resource에서 복사)
-│   └── plot_results.py                 # 결과 시각화
+│   └── plot_hybrid_results.py          # 결과 시각화 (reactive-resource에서 복사)
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
@@ -44,28 +46,29 @@ predictive-resource/
 
 ## 3. 사전 준비
 
-### 3.1 가상환경 및 패키지
+### 3.1 패키지 설치
 
 ```bash
 pip install pandas numpy matplotlib scikit-learn tensorflow requests aiohttp
 ```
 
-### 3.2 LSTM 모델 준비 (선택)
-
-`Dynamic_Resource_Allocation_Model/lstm_model.h5`와 `scaler.pkl`이 있으면 LSTM 예측을 사용합니다.  
-없으면 단순 이동평균(SMA)으로 자동 폴백합니다.
-
-```bash
-# 모델 학습이 필요한 경우
-cd Dynamic_Resource_Allocation_Model
-python preprocess_lstm.py sale_event_traffic.csv
-python train_lstm.py
-```
-
-### 3.3 Docker 이미지 빌드
+### 3.2 LSTM 모델 학습 (최초 1회)
 
 ```bash
 cd predictive-resource
+
+# 1. 전처리
+python model/preprocess_lstm.py
+
+# 2. 학습
+python model/train_lstm.py
+```
+
+모델 파일(`lstm_model.h5`, `scaler.pkl`)이 없으면 단순 이동평균(SMA)으로 자동 폴백합니다.
+
+### 3.3 Docker 이미지 빌드 (최초 1회)
+
+```bash
 docker build -t reactive-server .
 ```
 

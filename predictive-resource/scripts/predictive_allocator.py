@@ -12,10 +12,10 @@ import numpy as np
 # 경로 설정
 # =========================
 
-BASE_DIR   = Path(__file__).resolve().parent.parent          # predictive-resource/
-MODEL_PATH = BASE_DIR.parent / "Dynamic_Resource_Allocation_Model" / "lstm_model.h5"
-SCALER_PATH= BASE_DIR.parent / "Dynamic_Resource_Allocation_Model" / "scaler.pkl"
-OUTPUT_CSV = BASE_DIR / "data" / "output" / "predictive_allocation_plan.csv"
+BASE_DIR    = Path(__file__).resolve().parent.parent          # predictive-resource/
+MODEL_PATH  = BASE_DIR / "model" / "lstm_model.h5"
+SCALER_PATH = BASE_DIR / "model" / "scaler.pkl"
+OUTPUT_CSV  = BASE_DIR / "data" / "output" / "predictive_allocation_plan.csv"
 
 # =========================
 # 할당 파라미터
