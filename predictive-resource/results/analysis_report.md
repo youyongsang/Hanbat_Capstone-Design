@@ -4,20 +4,20 @@
 
 이번 분석은 아래 결과 파일을 기준으로 수행했다.
 
-- [predicted_traffic.csv](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/data/output/predicted_traffic.csv)
-- [resource_allocation_plan.csv](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/data/output/resource_allocation_plan.csv)
-- [predictive_allocation_log.csv](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/data/output/predictive_allocation_log.csv)
-- [hybrid_correction_log.csv](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/data/output/hybrid_correction_log.csv)
-- [loadgen_result.csv](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/data/output/loadgen_result.csv)
+- [predicted_traffic.csv](../data/output/predicted_traffic.csv)
+- [resource_allocation_plan.csv](../data/output/resource_allocation_plan.csv)
+- [predictive_allocation_log.csv](../data/output/predictive_allocation_log.csv)
+- [hybrid_correction_log.csv](../data/output/hybrid_correction_log.csv)
+- [loadgen_result.csv](../data/output/loadgen_result.csv)
 
 생성 그래프:
 
-- [predicted_vs_actual_rps.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/predicted_vs_actual_rps.png)
-- [prediction_error.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/prediction_error.png)
-- [resource_plan.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/resource_plan.png)
-- [plan_vs_actual_resource.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/plan_vs_actual_resource.png)
-- [correction_actions.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/correction_actions.png)
-- [loadgen_performance.png](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/loadgen_performance.png)
+- [predicted_vs_actual_rps.png](./predicted_vs_actual_rps.png)
+- [prediction_error.png](./prediction_error.png)
+- [resource_plan.png](./resource_plan.png)
+- [plan_vs_actual_resource.png](./plan_vs_actual_resource.png)
+- [correction_actions.png](./correction_actions.png)
+- [loadgen_performance.png](./loadgen_performance.png)
 
 ---
 
@@ -57,9 +57,9 @@
 
 현재 Predictive 레이어는 “정확한 미래 트래픽 추정기”라기보다, 대략적인 부하 추세를 반영하는 수준에 가깝다.
 
-![Predicted vs Actual](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/predicted_vs_actual_rps.png)
+![Predicted vs Actual](./predicted_vs_actual_rps.png)
 
-![Prediction Error](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/prediction_error.png)
+![Prediction Error](./prediction_error.png)
 
 ---
 
@@ -82,7 +82,7 @@
 
 현재 정책은 “예측 기반 동적 계획”이라기보다 “약간 보수적인 정적 계획 + 일부 조정”에 가까운 모습이다.
 
-![Resource Plan](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/resource_plan.png)
+![Resource Plan](./resource_plan.png)
 
 ---
 
@@ -112,9 +112,9 @@
 
 로그상 `curr_replicas`와 실제 활성 포트 수가 완전히 일치하지 않는 구간이 보여, replica 추적 로직은 추가 검증이 필요하다.
 
-![Plan vs Actual Resource](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/plan_vs_actual_resource.png)
+![Plan vs Actual Resource](./plan_vs_actual_resource.png)
 
-![Correction Actions](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/correction_actions.png)
+![Correction Actions](./correction_actions.png)
 
 ---
 
@@ -133,7 +133,7 @@
 - 하지만 p95 latency가 순간적으로 `2.5초`를 넘는 구간이 있어 응답 품질은 완전히 안정적이라고 보기 어렵다.
 - SLA 위반이 적지 않게 발생했으므로, “성공 처리율”은 높았지만 “사용자 체감 성능”은 여전히 개선이 필요하다.
 
-![Loadgen Performance](C:/Users/PC/Desktop/Capston%20Design/Hanbat_Capstone-Design/predictive-resource/results/loadgen_performance.png)
+![Loadgen Performance](./loadgen_performance.png)
 
 ---
 
