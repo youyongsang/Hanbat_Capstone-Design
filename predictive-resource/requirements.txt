@@ -2,3 +2,9 @@ fastapi
 uvicorn
 requests
 pydantic
+numpy
+pandas
+matplotlib
+scikit-learn
+tensorflow
+aiohttp

@@ -49,7 +49,13 @@ predictive-resource/
 ### 3.1 패키지 설치
 
 ```bash
-pip install pandas numpy matplotlib scikit-learn tensorflow requests aiohttp
+pip install -r requirements.txt
+```
+
+PowerShell에서는 아래처럼 실행할 수 있습니다.
+
+```powershell
+python -m pip install -r .\requirements.txt
 ```
 
 ### 3.2 LSTM 모델 학습 (최초 1회)
@@ -64,11 +70,27 @@ python model/preprocess_lstm.py
 python model/train_lstm.py
 ```
 
+PowerShell 예시는 다음과 같습니다.
+
+```powershell
+Set-Location .\predictive-resource
+
+# 1. 전처리
+python .\model\preprocess_lstm.py
+
+# 2. 학습
+python .\model\train_lstm.py
+```
+
 모델 파일(`lstm_model.h5`, `scaler.pkl`)이 없으면 단순 이동평균(SMA)으로 자동 폴백합니다.
 
 ### 3.3 Docker 이미지 빌드 (최초 1회)
 
 ```bash
+docker build -t reactive-server .
+```
+
+```powershell
 docker build -t reactive-server .
 ```
 
@@ -79,6 +101,10 @@ docker build -t reactive-server .
 ### 4.1 기존 컨테이너 정리
 
 ```bash
+docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
+```
+
+```powershell
 docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
 ```
 
@@ -95,10 +121,27 @@ python scripts/hybrid_load_generator.py
 python scripts/run_hybrid.py --with-loadgen
 ```
 
+PowerShell에서는 경로 구분을 아래처럼 써도 됩니다.
+
+```powershell
+# 터미널 1: 하이브리드 시스템
+python .\scripts\run_hybrid.py
+
+# 터미널 2: 로드 생성기 (별도 실행)
+python .\scripts\hybrid_load_generator.py
+
+# 또는 한 번에
+python .\scripts\run_hybrid.py --with-loadgen
+```
+
 ### 4.3 CSV 경로 직접 지정
 
 ```bash
 python scripts/run_hybrid.py --csv data/input/sale_event_traffic.csv
+```
+
+```powershell
+python .\scripts\run_hybrid.py --csv .\data\input\sale_event_traffic.csv
 ```
 
 ---
