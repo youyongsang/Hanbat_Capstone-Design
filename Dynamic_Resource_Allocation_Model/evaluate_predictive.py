@@ -1,52 +1,50 @@
-import os
-import pickle
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
+import pickle
 from tensorflow.keras.models import load_model
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-def evaluate():
-    # plots 폴더가 없으면 자동 생성 코드 추가
-    os.makedirs('plots', exist_ok=True)
+def evaluate_model():
+    print("📊 모델 평가 및 시각화 시작...")
     
-    if not os.path.exists('X_test.npy'):
-        raise FileNotFoundError("❌ 테스트 데이터가 없습니다. 전처리를 먼저 수행하세요.")
+    # 1. 모델 및 데이터 로드
+    try:
+        model = load_model('lstm_model.h5')
+        X_test = np.load('X_test.npy')
+        y_test = np.load('y_test.npy')
+        
+        # [수정] 출력용 스케일러 로드
+        with open('scaler_y.pkl', 'rb') as f:
+            scaler_y = pickle.load(f)
+    except FileNotFoundError as e:
+        print(f"❌ 필요한 파일이 없습니다: {e}")
+        return
 
-    X_test = np.load('X_test.npy')
-    y_test = np.load('y_test.npy')
+    # 2. 예측 수행
+    y_pred_scaled = model.predict(X_test, verbose=0)
     
-    model = load_model('lstm_model.h5')
-    with open('scaler.pkl', 'rb') as f:
-        scaler = pickle.load(f)
+    # 3. 역정규화 (StandardScaler -> 실제 RPS)
+    y_true = scaler_y.inverse_transform(y_test)
+    y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
-    # 모델 예측
-    pred_scaled = model.predict(X_test, verbose=0)
-    
-    # 역정규화 (실제 RPS 값으로 복원)
-    y_true = scaler.inverse_transform(y_test)
-    y_pred = scaler.inverse_transform(pred_scaled)
-
-    # 객관적 평가지표 계산
+    # 4. 성능 평가
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    print(f"\n✅ 평가 결과")
+    print(f" - MAE  (평균 오차): {mae:.2f} RPS")
+    print(f" - RMSE (오차 제곱근): {rmse:.2f} RPS")
 
-    print(f"\n📊 [Test 데이터(미학습 구간) 평가 결과]")
-    print(f" - MAE  (평균 절대 오차): {mae:.2f}")
-    print(f" - RMSE (루트 평균 제곱 오차): {rmse:.2f}")
-
-    # 실제 vs 예측 시각화
-    plt.figure(figsize=(12, 5))
-    plt.plot(y_true, label='Actual Traffic (Test Set)', color='black', alpha=0.7)
-    plt.plot(y_pred, label='Predicted Traffic (LSTM)', color='blue', linestyle='--')
-    plt.title('Test Set Target RPS vs Predicted RPS')
-    plt.xlabel('Time Step')
+    # 5. 시각화 (처음 500개 샘플)
+    plt.figure(figsize=(15, 6))
+    plt.plot(y_true[:500], label='Actual Traffic', color='black', alpha=0.7)
+    plt.plot(y_pred[:500], label='LSTM Predicted', color='red', linestyle='--')
+    plt.title('RPS Prediction: Actual vs Improved LSTM (Huber Loss)')
+    plt.xlabel('Time (sec)')
     plt.ylabel('RPS')
     plt.legend()
-    plt.grid(True)
-    
-    plot_path = 'plots/test_evaluation_result.png'
-    plt.savefig(plot_path)
-    print(f"✅ 평가 그래프 저장 완료: {plot_path}\n")
+    plt.grid(True, alpha=0.3)
+    plt.show()
 
 if __name__ == "__main__":
-    evaluate()
+    evaluate_model()
