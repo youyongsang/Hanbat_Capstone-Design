@@ -1,46 +1,60 @@
 # predictive-resource
 
-LSTM 예측 모델과 Reactive 보정 메커니즘을 결합한 **하이브리드 동적 자원 할당 시스템**.
+LSTM 예측 모델과 Reactive 보정 메커니즘을 결합한 하이브리드 동적 자원 할당 시스템입니다.
 
 ---
 
 ## 1. 프로젝트 개요
 
-기존 `reactive-resource`는 성능 저하가 *발생한 뒤* 자원을 늘리는 방식이라 딜레이와 과부하 구간이 불가피합니다.  
-이 프로젝트는 두 가지 레이어를 조합해 그 문제를 해결합니다.
+이 디렉토리는 아래 4단계 흐름으로 동작합니다.
 
-| 레이어 | 방식 | 역할 |
-|--------|------|------|
-| Layer A | 예측 (LSTM) | CSV 스케줄의 미래 트래픽을 5초 앞서 예측해 Docker 자원을 선제 할당 |
-| Layer B | 반응형 보정 | 실시간 /metrics를 2초마다 확인, 예측과 실제의 편차를 발견하면 CPU·컨테이너 보정 |
+1. 과거 CSV로 LSTM 학습
+2. 학습된 모델로 미래 트래픽을 순차 예측
+3. 예측 결과를 규칙 기반 자원 정책에 넣어 계획 CSV 생성
+4. 실행 시에는 계획 CSV를 따라 선제 할당하고, Reactive 보정 레이어가 실시간으로 오차를 조정
+
+즉 현재 구조는 `예측 -> 계획 생성 -> 계획 실행 -> 실시간 보정`으로 분리되어 있습니다.
 
 ---
 
 ## 2. 디렉토리 구조
 
-```
+```text
 predictive-resource/
 ├── app/
-│   └── app.py                          # FastAPI 서버 (reactive-resource와 동일)
+│   └── app.py
 ├── data/
-│   └── input/
-│       └── sale_event_traffic.csv      # 트래픽 시나리오
+│   ├── input/
+│   │   └── sale_event_traffic.csv
+│   └── output/
+│       ├── predicted_traffic.csv
+│       ├── resource_allocation_plan.csv
+│       ├── predictive_allocation_log.csv
+│       ├── hybrid_correction_log.csv
+│       └── loadgen_result.csv
 ├── model/
-│   ├── preprocess_lstm.py              # 데이터 전처리
-│   ├── train_lstm.py                   # LSTM 모델 학습
-│   ├── lstm_model.h5                   # 학습 후 생성
-│   └── scaler.pkl                      # 학습 후 생성
-├── results/                            # 시각화 결과 PNG (실행 후 생성)
+│   ├── preprocess_lstm.py
+│   ├── train_lstm.py
+│   ├── lstm_model.h5
+│   └── scaler.pkl
 ├── scripts/
-│   ├── predictive_allocator.py         # Layer A: LSTM 예측 + 선제 할당
-│   ├── hybrid_controller.py            # Layer B: 실시간 보정
-│   ├── run_hybrid.py                   # 진입점 (두 레이어 동시 구동)
-│   ├── hybrid_load_generator.py        # 로드 생성기 (reactive-resource에서 복사)
-│   └── plot_hybrid_results.py          # 결과 시각화 (reactive-resource에서 복사)
+│   ├── forecast_and_plan.py
+│   ├── predictive_allocator.py
+│   ├── hybrid_controller.py
+│   ├── hybrid_load_generator.py
+│   ├── plot_hybrid_results.py
+│   └── run_hybrid.py
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
 ```
+
+파일 역할:
+
+- `forecast_and_plan.py`: 미래 트래픽 예측 CSV와 자원 계획 CSV 생성
+- `predictive_allocator.py`: 계획 CSV를 읽어 시간축에 맞춰 선제 할당
+- `hybrid_controller.py`: 실시간 metrics 기반 보정
+- `run_hybrid.py`: 계획 실행과 보정 루프를 함께 구동
 
 ---
 
@@ -52,43 +66,37 @@ predictive-resource/
 pip install -r requirements.txt
 ```
 
-PowerShell에서는 아래처럼 실행할 수 있습니다.
+PowerShell:
 
 ```powershell
 python -m pip install -r .\requirements.txt
 ```
 
-### 3.2 LSTM 모델 학습 (최초 1회)
+### 3.2 LSTM 모델 학습
 
 ```bash
 cd predictive-resource
-
-# 1. 전처리
 python model/preprocess_lstm.py
-
-# 2. 학습
 python model/train_lstm.py
 ```
 
-PowerShell 예시는 다음과 같습니다.
+PowerShell:
 
 ```powershell
 Set-Location .\predictive-resource
-
-# 1. 전처리
 python .\model\preprocess_lstm.py
-
-# 2. 학습
 python .\model\train_lstm.py
 ```
 
-모델 파일(`lstm_model.h5`, `scaler.pkl`)이 없으면 단순 이동평균(SMA)으로 자동 폴백합니다.
+현재 `forecast_and_plan.py`는 학습된 `lstm_model.h5`와 `scaler.pkl`이 있어야 동작합니다.
 
-### 3.3 Docker 이미지 빌드 (최초 1회)
+### 3.3 Docker 이미지 빌드
 
 ```bash
 docker build -t reactive-server .
 ```
+
+PowerShell:
 
 ```powershell
 docker build -t reactive-server .
@@ -104,61 +112,97 @@ docker build -t reactive-server .
 docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
 ```
 
+PowerShell:
+
 ```powershell
 docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
 ```
 
-### 4.2 하이브리드 시스템 실행
+### 4.2 미래 트래픽 및 자원 계획 생성
 
 ```bash
-# 터미널 1: 하이브리드 시스템
-python scripts/run_hybrid.py
-
-# 터미널 2: 로드 생성기 (별도 실행)
-python scripts/hybrid_load_generator.py
-
-# 또는 한 번에
-python scripts/run_hybrid.py --with-loadgen
+python scripts/forecast_and_plan.py --input-csv data/input/sale_event_traffic.csv
 ```
 
-PowerShell에서는 경로 구분을 아래처럼 써도 됩니다.
+PowerShell:
 
 ```powershell
-# 터미널 1: 하이브리드 시스템
-python .\scripts\run_hybrid.py
-
-# 터미널 2: 로드 생성기 (별도 실행)
-python .\scripts\hybrid_load_generator.py
-
-# 또는 한 번에
-python .\scripts\run_hybrid.py --with-loadgen
+python .\scripts\forecast_and_plan.py --input-csv .\data\input\sale_event_traffic.csv
 ```
 
-### 4.3 CSV 경로 직접 지정
+선택 옵션:
 
 ```bash
-python scripts/run_hybrid.py --csv data/input/sale_event_traffic.csv
+python scripts/forecast_and_plan.py --observed-points 60
 ```
 
+생성 파일:
+
+- `data/output/predicted_traffic.csv`
+- `data/output/resource_allocation_plan.csv`
+
+### 4.3 하이브리드 시스템 실행
+
+```bash
+python scripts/run_hybrid.py --plan-csv data/output/resource_allocation_plan.csv
+```
+
+PowerShell:
+
 ```powershell
-python .\scripts\run_hybrid.py --csv .\data\input\sale_event_traffic.csv
+python .\scripts\run_hybrid.py --plan-csv .\data\output\resource_allocation_plan.csv
+```
+
+로드 생성기를 함께 실행하려면:
+
+```bash
+python scripts/run_hybrid.py --plan-csv data/output/resource_allocation_plan.csv --with-loadgen
+```
+
+PowerShell:
+
+```powershell
+python .\scripts\run_hybrid.py --plan-csv .\data\output\resource_allocation_plan.csv --with-loadgen
+```
+
+실제 로드용 CSV를 직접 지정하려면:
+
+```bash
+python scripts/run_hybrid.py --plan-csv data/output/resource_allocation_plan.csv --actual-csv data/input/sale_event_traffic.csv
 ```
 
 ---
 
 ## 5. 핵심 설계
 
-### LOOKAHEAD_SEC = 5
-컨테이너 기동에 약 2~3초 걸리므로, 현재 시각 기준 5초 뒤의 트래픽을 미리 예측해 자원을 준비합니다.
+### 5.1 예측과 실행 분리
 
-### AllocationState 공유 객체
-예측 레이어가 설정한 `(cpu, replicas)`를 보정 레이어의 **복귀 기준선**으로 사용합니다.  
-보정 레이어는 성능이 나빠지면 올리고, 여유가 생기면 예측 수준까지만 내립니다 (최솟값까지 내리지 않음).
+예측은 `forecast_and_plan.py`에서 수행하고, 실행은 `predictive_allocator.py`가 계획 CSV를 읽어서 처리합니다.  
+즉 실행 시점에는 미래 CSV 정답을 직접 참조하지 않습니다.
 
-### 보정 우선순위
-1. 과부하 → CPU 먼저 증가 → CPU 한계 + 심각 과부하면 컨테이너 추가
-2. 여유 → 예측 수준(pred_cpu / pred_replicas)으로 복귀
-3. 정상 → HOLD
+### 5.2 자원 정책
+
+예측된 `predicted_rps`는 아래 규칙으로 자원 계획으로 변환됩니다.
+
+- `SAFETY_MARGIN = 1.2`
+- `CONTAINER_CAPACITY = 80`
+- `MIN_REPLICAS = 1`, `MAX_REPLICAS = 5`
+- `MIN_CPU = 0.5`, `MAX_CPU = 3.0`
+
+CPU 정책:
+
+- 컨테이너당 40 RPS 이하: `0.5 CPU`
+- 컨테이너당 80 RPS 이하: `1.0 CPU`
+- 컨테이너당 120 RPS 이하: `2.0 CPU`
+- 그 이상: `3.0 CPU`
+
+### 5.3 Reactive 보정
+
+Reactive 보정 레이어는 `AllocationState`에 저장된 계획 기준선을 바탕으로 동작합니다.
+
+- 과부하: CPU 먼저 증가, 부족하면 replica 증가
+- 여유 상태: 계획 수준으로 복귀
+- 정상 상태: 유지
 
 ---
 
@@ -166,9 +210,12 @@ python .\scripts\run_hybrid.py --csv .\data\input\sale_event_traffic.csv
 
 | 파일 | 내용 |
 |------|------|
-| `data/output/predictive_allocation_plan.csv` | 매 초 예측 RPS, 목표 CPU, 목표 replica, 적용 여부 |
-| `data/output/hybrid_correction_log.csv` | 보정 시각, 예측 vs 실제 상태, 보정 액션, latency, CPU 사용률 |
-| `results/*.png` | 시각화 그래프 |
+| `data/output/predicted_traffic.csv` | 시간축별 예측 트래픽 |
+| `data/output/resource_allocation_plan.csv` | 예측 트래픽을 자원 계획으로 변환한 결과 |
+| `data/output/predictive_allocation_log.csv` | 계획 실행 로그 |
+| `data/output/hybrid_correction_log.csv` | 실시간 보정 로그 |
+| `data/output/loadgen_result.csv` | 실제 부하 발생 결과 |
+| `results/*.png` | 시각화 결과 |
 
 ---
 
@@ -176,7 +223,7 @@ python .\scripts\run_hybrid.py --csv .\data\input\sale_event_traffic.csv
 
 | 항목 | reactive-resource | predictive-resource |
 |------|-------------------|---------------------|
-| 자원 할당 시점 | 성능 저하 후 | 트래픽 증가 5초 전 |
-| 딜레이 구간 | 발생 | 최소화 |
+| 자원 할당 시점 | 성능 저하 후 | 계획 기반 선제 할당 후 보정 |
 | 과부하 보호 | 반응형 | 예측 + 반응형 보정 |
-| LSTM 모델 사용 | X | O (없으면 SMA 폴백) |
+| 계획 CSV 생성 | X | O |
+| LSTM 모델 사용 | X | O |
