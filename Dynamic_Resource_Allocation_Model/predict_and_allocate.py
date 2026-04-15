@@ -3,7 +3,7 @@ import pandas as pd
 import pickle
 import time
 from tensorflow.keras.models import load_model
-from resource_policy import allocate_resource # 사용자님의 기존 정책 파일
+from resource_policy import allocate_resource # 수정된 정책 파일
 
 def run_realtime_simulation(test_rps_data):
     """
@@ -27,16 +27,16 @@ def run_realtime_simulation(test_rps_data):
         print(f"⚠️ 데이터 부족: {len(test_rps_data)}/{window_size}")
         return
 
-    # 2. [중요] 실시간 데이터를 학습 규격(3개 Feature)으로 가공
+    # 2. [중요 수정] 실시간 데이터를 변경된 학습 규격으로 가공
     df = pd.DataFrame(test_rps_data, columns=['target_rps'])
-    df['moving_avg'] = df['target_rps'].rolling(window=10).mean()
-    df['diff'] = df['target_rps'].diff().fillna(0).rolling(window=3).mean()
+    df['instant_diff'] = df['target_rps'].diff().fillna(0)
+    df['realtime_std'] = df['target_rps'].rolling(window=3).std().fillna(0)
     
-    # 동적 클리핑 (학습 때와 동일한 로직 권장이나 여기선 간단히 처리)
+    # 결측치 처리
     df = df.ffill().bfill()
     
-    # 최신 윈도우 추출
-    recent_features = df[['target_rps', 'moving_avg', 'diff']].values[-window_size:]
+    # 최신 윈도우 추출 (피처 이름 변경됨)
+    recent_features = df[['target_rps', 'instant_diff', 'realtime_std']].values[-window_size:]
 
     # 3. 스케일링 및 예측
     input_scaled = sx.transform(recent_features).reshape(1, window_size, 3)
@@ -45,13 +45,16 @@ def run_realtime_simulation(test_rps_data):
     # 4. RPS 복원
     predicted_rps = sy.inverse_transform(pred_scaled)[0][0]
 
-    # 5. [상호작용] 기존 자원 할당 정책 호출
-    cpu, replicas = allocate_resource(predicted_rps)
+    # 5. [중요 수정] 기존 자원 할당 정책 호출 (Panic Mode를 위해 현재 RPS 전달)
+    current_rps = df['target_rps'].iloc[-1]
+    cpu, replicas = allocate_resource(predicted_rps, current_rps=current_rps)
 
-    print(f"🔮 [예측] {predicted_rps:.1f} RPS | ⚙️ [할당] CPU: {cpu}, Replicas: {replicas}")
+    print(f"🔮 [예측] {predicted_rps:.1f} RPS (현재: {current_rps:.1f}) | ⚙️ [할당] CPU: {cpu}, Replicas: {replicas}")
     return predicted_rps, cpu, replicas
 
 if __name__ == "__main__":
     # 시뮬레이션용 가짜 데이터 (90개)
+    dummy_history = np.random.randint(80, 120, 90).tolist()
+    run_realtime_simulation(dummy_history)
     dummy_history = np.random.randint(80, 120, 90).tolist()
     run_realtime_simulation(dummy_history)
