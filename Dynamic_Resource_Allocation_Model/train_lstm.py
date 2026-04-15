@@ -7,7 +7,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 
 def train_ultimate():
-    print("🚀 고성능 LSTM 모델 학습 준비...")
+    print("🚀 고성능 LSTM 모델 학습 준비 (고변동성 완벽 추적)...")
     if not os.path.exists('X_train.npy'):
         raise FileNotFoundError("❌ 학습 데이터가 없습니다. 전처리 코드를 먼저 실행하세요.")
 
@@ -15,29 +15,26 @@ def train_ultimate():
     X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
     X_val, y_val = np.load('X_val.npy'), np.load('y_val.npy')
 
-    # --- [2] 모델 아키텍처 (과적합 방지 및 시계열 패턴 심층 학습) ---
+    # --- [2] 모델 아키텍처 (변동성 학습 강화) ---
     model = Sequential([
-        # 첫 번째 층: 흐름 전체를 다음 레이어로 넘김
-        LSTM(64, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
-        Dropout(0.2),
-        # 두 번째 층: 엑기스 특징 추출
-        LSTM(32),
-        Dropout(0.2),
+        # 노드를 128로 늘려 고주파 패턴을 더 잘 캐치하도록 수정
+        LSTM(128, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        Dropout(0.1), # 피팅력을 높이기 위해 드롭아웃 감소 (0.2 -> 0.1)
+        LSTM(64),
         Dense(32, activation="relu"),
-        # 출력층: Linear (활성화 함수 없이 값 자체를 예측)
-        Dense(1)
+        Dense(1) # 최종 예측
     ])
 
-    # --- [3] 컴파일 (Huber Loss 및 Adam 최적화) ---
-    # Huber Loss: 오차가 작을 땐 MSE(정밀도), 오차가 클 땐 MAE(이상치 강건성)로 작동
-    optimizer = Adam(learning_rate=0.0005)
+    # --- [3] 컴파일 (MSE와 조금 더 높은 학습률) ---
+    # Huber 대신 MSE를 사용하여 피크(이상치) 오차에 매우 민감하게 반응하게 함
+    optimizer = Adam(learning_rate=0.001)
     model.compile(
         optimizer=optimizer, 
-        loss=tf.keras.losses.Huber(delta=1.0), 
-        metrics=['mae', 'mse']
+        loss='mse', # 핵심 변경 포인트
+        metrics=['mae']
     )
     
-    # --- [4] 콜백 설정 (충분한 인내심 부여) ---
+    # --- [4] 콜백 설정 ---
     early_stop = EarlyStopping(
         monitor='val_loss', 
         patience=15, 
@@ -47,13 +44,13 @@ def train_ultimate():
     
     print("🧠 모델 학습 시작...")
     
-    # --- [5] 학습 진행 (배치 사이즈 32, 배치 셔플링 적용) ---
+    # --- [5] 학습 진행 ---
     model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
         epochs=200, 
         batch_size=32, 
-        shuffle=True, # 윈도우 샘플 간의 순서를 섞어 Local Minima 방지
+        shuffle=True, # 윈도우 샘플 셔플링
         callbacks=[early_stop],
         verbose=1
     )
