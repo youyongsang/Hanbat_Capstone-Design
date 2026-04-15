@@ -4,35 +4,19 @@ import pickle
 from tensorflow.keras.models import load_model
 
 def evaluate_model_full():
-    print("📊 결과 시각화 중...")
-    
     model = load_model('lstm_model.h5')
-    X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
-    X_val, y_val = np.load('X_val.npy'), np.load('y_val.npy')
     X_test, y_test = np.load('X_test.npy'), np.load('y_test.npy')
-    
-    X_all = np.concatenate((X_train, X_val, X_test))
-    y_all = np.concatenate((y_train, y_val, y_test))
-    
     with open('scaler_y.pkl', 'rb') as f:
-        scaler_y = pickle.load(f)
+        sy = pickle.load(f)
 
-    y_pred_scaled = model.predict(X_all, verbose=0)
-    
-    y_true = scaler_y.inverse_transform(y_all)
-    y_pred = scaler_y.inverse_transform(y_pred_scaled)
+    y_pred = sy.inverse_transform(model.predict(X_test))
+    y_true = sy.inverse_transform(y_test)
 
-    plt.figure(figsize=(15, 6))
-    plt.plot(y_true, label='Actual Traffic', color='black', alpha=0.7)
-    plt.plot(y_pred, label='LSTM Predicted (Hign-Fidelity Mirror)', color='red', linestyle='--') # 타이틀 수정
-    
-    plt.axvline(x=len(X_train)+len(X_val), color='blue', linestyle=':', label='Test Start')
-    
-    plt.title('Full Traffic Prediction - High-Fidelity Mirror Tracking')
-    plt.xlabel('Time (sec)')
-    plt.ylabel('RPS')
+    plt.figure(figsize=(15, 5))
+    plt.plot(y_true, label='Actual', color='black', alpha=0.6)
+    plt.plot(y_pred, label='Predicted (Feedback Applied)', color='red', linestyle='--')
+    plt.title('Final Optimized Traffic Prediction')
     plt.legend()
-    plt.grid(True, alpha=0.3)
     plt.show()
 
 if __name__ == "__main__":
