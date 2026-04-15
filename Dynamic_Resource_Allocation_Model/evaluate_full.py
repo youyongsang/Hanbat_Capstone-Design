@@ -27,15 +27,15 @@ def evaluate_model_full():
     y_true = scaler_y.inverse_transform(y_all)
     y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
-    # 4. 시각화 (기존 양식 그대로)
+    # 4. 시각화 
     plt.figure(figsize=(15, 6))
     plt.plot(y_true, label='Actual Traffic', color='black', alpha=0.7)
     plt.plot(y_pred, label='LSTM Predicted', color='red', linestyle='--')
     
-    # 학습과 테스트 경계에 파란 점선 하나 추가 (참고용)
+    # 학습과 테스트 경계에 파란 점선 하나 추가
     plt.axvline(x=len(X_train)+len(X_val), color='blue', linestyle=':', label='Test Start')
     
-    plt.title('Full Traffic Prediction (1s - 1000s)')
+    plt.title('Full Traffic Prediction (1s - 1000s) - Ultimate Model')
     plt.xlabel('Time (sec)')
     plt.ylabel('RPS')
     plt.legend()
