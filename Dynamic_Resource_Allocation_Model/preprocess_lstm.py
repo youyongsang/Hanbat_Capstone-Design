@@ -3,24 +3,21 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
-def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
-    print("🛠️ 데이터 전처리 시작 (고주파 피크 추적 강화 버전)...")
+def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=20): # 윈도우 사이즈 20으로 축소
+    print("🛠️ 데이터 전처리 시작 (하드코어 피크 추적 버전)...")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"❌ 파일이 존재하지 않습니다: {csv_path}")
 
     df = pd.read_csv(csv_path)
     
-    # --- [1] Feature Engineering (실시간 변동성 피처로 교체) ---
-    # 1. 1초 단위 즉각적인 변화량 (지연 없이 바로 반응)
-    df['instant_diff'] = df['target_rps'].diff().fillna(0)
-    # 2. 최근 3초간의 요동침 (표준편차를 통해 피크 진입을 감지)
-    df['realtime_std'] = df['target_rps'].rolling(window=3).std().fillna(0)
+    # --- [1] Feature Engineering (초민감 지표 4개 적용) ---
+    df['instant_diff'] = df['target_rps'].diff().fillna(0) # 1초 전 대비 변화량
+    df['realtime_std'] = df['target_rps'].rolling(window=2).std().fillna(0) # 2초 윈도우로 극강의 예민함
+    df['acceleration'] = df['instant_diff'].diff().fillna(0) # 변화량의 변화량 (가속도)
     
-    # 결측치 처리
     df = df.ffill().bfill()
 
-    # 학습에 사용할 3가지 피처 업데이트
-    feature_cols = ['target_rps', 'instant_diff', 'realtime_std']
+    feature_cols = ['target_rps', 'instant_diff', 'realtime_std', 'acceleration']
     data_x = df[feature_cols].values
     data_y = df['target_rps'].values.reshape(-1, 1)
 
@@ -31,8 +28,6 @@ def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
     min_test_size = int(len(df) * 0.2)
     if len(df) - split_idx < min_test_size:
         split_idx = len(df) - min_test_size
-        
-    print(f"🚩 데이터 피크 지점: {spike_idx}s | 최종 분할 지점: {split_idx}s")
 
     full_train_x_raw = data_x[:split_idx]
     full_train_y_raw = data_y[:split_idx]
@@ -69,8 +64,6 @@ def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
     X_val, y_val = create_window(val_x_scaled, val_y_scaled)
     X_test, y_test = create_window(test_x_scaled, test_y_scaled)
 
-    print(f"📊 최종 데이터셋 -> Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
-
     # --- [5] 파일 저장 ---
     np.save('X_train.npy', X_train); np.save('y_train.npy', y_train)
     np.save('X_val.npy', X_val); np.save('y_val.npy', y_val)
@@ -78,7 +71,7 @@ def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
     with open('scaler_x.pkl', 'wb') as f: pickle.dump(scaler_x, f)
     with open('scaler_y.pkl', 'wb') as f: pickle.dump(scaler_y, f)
     
-    print("✅ 전처리 및 파일 저장 완료!")
+    print("✅ 전처리 완료! 피처 4개, 윈도우 20으로 데이터가 생성되었습니다.")
 
 if __name__ == "__main__":
     preprocess_ultimate()
