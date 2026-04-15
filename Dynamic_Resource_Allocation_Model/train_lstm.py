@@ -7,57 +7,55 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 
 def train_ultimate():
-    print("🚀 고성능 LSTM 모델 학습 준비 (고변동성 완벽 추적)...")
+    print("🚀 하드코어 LSTM 모델 학습 준비...")
     if not os.path.exists('X_train.npy'):
-        raise FileNotFoundError("❌ 학습 데이터가 없습니다. 전처리 코드를 먼저 실행하세요.")
+        raise FileNotFoundError("❌ 전처리 코드를 먼저 실행하세요.")
 
-    # --- [1] 데이터 로드 ---
     X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
     X_val, y_val = np.load('X_val.npy'), np.load('y_val.npy')
 
-    # --- [2] 모델 아키텍처 (변동성 학습 강화) ---
+    # --- [핵심] 트래픽이 높은 구간에 가중치 5배 부여 ---
+    # 상위 30%의 높은 RPS 구간을 못 맞추면 엄청난 페널티를 받게 함
+    sample_weights = np.ones(len(y_train))
+    high_val_idx = np.where(y_train > np.percentile(y_train, 70))[0]
+    sample_weights[high_val_idx] = 5.0 
+
+    # --- 모델 아키텍처 (더 깊고 무겁게) ---
     model = Sequential([
-        # 노드를 128로 늘려 고주파 패턴을 더 잘 캐치하도록 수정
-        LSTM(128, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
-        Dropout(0.1), # 피팅력을 높이기 위해 드롭아웃 감소 (0.2 -> 0.1)
+        LSTM(256, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        Dropout(0.05), # 데이터에 거의 달라붙게(Overfitting 유도) 만듦
+        LSTM(128, return_sequences=True),
         LSTM(64),
+        Dense(64, activation="relu"),
         Dense(32, activation="relu"),
-        Dense(1) # 최종 예측
+        Dense(1)
     ])
 
-    # --- [3] 컴파일 (MSE와 조금 더 높은 학습률) ---
-    # Huber 대신 MSE를 사용하여 피크(이상치) 오차에 매우 민감하게 반응하게 함
-    optimizer = Adam(learning_rate=0.001)
-    model.compile(
-        optimizer=optimizer, 
-        loss='mse', # 핵심 변경 포인트
-        metrics=['mae']
-    )
+    optimizer = Adam(learning_rate=0.0005) # 세밀한 학습을 위해 학습률 낮춤
+    model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
     
-    # --- [4] 콜백 설정 ---
     early_stop = EarlyStopping(
         monitor='val_loss', 
-        patience=15, 
+        patience=20, # 충분히 오래 학습하도록 늘림
         restore_best_weights=True,
         verbose=1
     )
     
     print("🧠 모델 학습 시작...")
     
-    # --- [5] 학습 진행 ---
     model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
-        epochs=200, 
-        batch_size=32, 
-        shuffle=True, # 윈도우 샘플 셔플링
+        epochs=300, 
+        batch_size=16, # 배치 사이즈를 줄여서 데이터 하나하나의 굴곡을 다 보도록 함
+        sample_weight=sample_weights, # 가중치 적용!
+        shuffle=True, 
         callbacks=[early_stop],
         verbose=1
     )
     
-    # --- [6] 모델 저장 ---
     model.save('lstm_model.h5')
-    print("✅ 최고 성능의 모델이 'lstm_model.h5'로 저장되었습니다!")
+    print("✅ 하드코어 피팅 모델 저장 완료!")
 
 if __name__ == "__main__":
     train_ultimate()
