@@ -14,7 +14,6 @@ def evaluate_model():
         X_test = np.load('X_test.npy')
         y_test = np.load('y_test.npy')
         
-        # [수정] 출력용 스케일러 로드
         with open('scaler_y.pkl', 'rb') as f:
             scaler_y = pickle.load(f)
     except FileNotFoundError as e:
@@ -24,7 +23,7 @@ def evaluate_model():
     # 2. 예측 수행
     y_pred_scaled = model.predict(X_test, verbose=0)
     
-    # 3. 역정규화 (StandardScaler -> 실제 RPS)
+    # 3. 역정규화
     y_true = scaler_y.inverse_transform(y_test)
     y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
@@ -39,7 +38,7 @@ def evaluate_model():
     plt.figure(figsize=(15, 6))
     plt.plot(y_true[:500], label='Actual Traffic', color='black', alpha=0.7)
     plt.plot(y_pred[:500], label='LSTM Predicted', color='red', linestyle='--')
-    plt.title('RPS Prediction: Actual vs Improved LSTM (Huber Loss)')
+    plt.title('RPS Prediction: Actual vs High-Frequency LSTM (MSE)') # 타이틀 수정
     plt.xlabel('Time (sec)')
     plt.ylabel('RPS')
     plt.legend()
