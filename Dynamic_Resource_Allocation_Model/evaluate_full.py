@@ -4,7 +4,7 @@ import pickle
 from tensorflow.keras.models import load_model
 
 def evaluate_model_full():
-    print("📊 전체 트래픽 예측 시각화 중...")
+    print("📊 결과 시각화 중...")
     
     model = load_model('lstm_model.h5')
     X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
@@ -24,11 +24,11 @@ def evaluate_model_full():
 
     plt.figure(figsize=(15, 6))
     plt.plot(y_true, label='Actual Traffic', color='black', alpha=0.7)
-    plt.plot(y_pred, label='LSTM Predicted (Hardcore)', color='red', linestyle='--')
+    plt.plot(y_pred, label='LSTM Predicted (Hign-Fidelity Mirror)', color='red', linestyle='--') # 타이틀 수정
     
     plt.axvline(x=len(X_train)+len(X_val), color='blue', linestyle=':', label='Test Start')
     
-    plt.title('Full Traffic Prediction - Hardcore Peak Tracking')
+    plt.title('Full Traffic Prediction - High-Fidelity Mirror Tracking')
     plt.xlabel('Time (sec)')
     plt.ylabel('RPS')
     plt.legend()
