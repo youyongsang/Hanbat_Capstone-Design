@@ -4,56 +4,48 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
-    print("🛠️ 데이터 전처리 시작...")
+    print("🛠️ 데이터 전처리 시작 (고주파 피크 추적 강화 버전)...")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"❌ 파일이 존재하지 않습니다: {csv_path}")
 
     df = pd.read_csv(csv_path)
     
-    # --- [1] Feature Engineering (파생 변수 생성) ---
-    # 10초 이동평균선: 전체적인 흐름 파악
-    df['moving_avg'] = df['target_rps'].rolling(window=10).mean()
-    # 변화량(diff) 및 3초 평활화: 가속도 파악 및 노이즈 제거
-    df['diff'] = df['target_rps'].diff().fillna(0).rolling(window=3).mean()
+    # --- [1] Feature Engineering (실시간 변동성 피처로 교체) ---
+    # 1. 1초 단위 즉각적인 변화량 (지연 없이 바로 반응)
+    df['instant_diff'] = df['target_rps'].diff().fillna(0)
+    # 2. 최근 3초간의 요동침 (표준편차를 통해 피크 진입을 감지)
+    df['realtime_std'] = df['target_rps'].rolling(window=3).std().fillna(0)
     
-    # --- [2] 동적 Clipping 적용 (하드코딩 제거) ---
-    diff_upper = df['diff'].quantile(0.99)
-    diff_lower = df['diff'].quantile(0.01)
-    df['diff'] = df['diff'].clip(lower=diff_lower, upper=diff_upper)
-    
-    # 결측치 처리 (최신 Pandas 권장 문법)
+    # 결측치 처리
     df = df.ffill().bfill()
 
-    feature_cols = ['target_rps', 'moving_avg', 'diff']
+    # 학습에 사용할 3가지 피처 업데이트
+    feature_cols = ['target_rps', 'instant_diff', 'realtime_std']
     data_x = df[feature_cols].values
     data_y = df['target_rps'].values.reshape(-1, 1)
 
-    # --- [3] 전략적 데이터 분할 (Spike 보장 & Test 크기 보장) ---
+    # --- [2] 전략적 데이터 분할 ---
     spike_idx = df['target_rps'].idxmax()
-    # 기본적으로 80%를 자르되, Spike가 뒤에 있다면 Spike + window_size까지 Train으로 확보
     split_idx = max(int(len(df) * 0.8), spike_idx + window_size)
 
-    # Test 데이터 최소 20% 보장 (평가의 객관성 확보)
     min_test_size = int(len(df) * 0.2)
     if len(df) - split_idx < min_test_size:
         split_idx = len(df) - min_test_size
-    
+        
     print(f"🚩 데이터 피크 지점: {spike_idx}s | 최종 분할 지점: {split_idx}s")
 
-    # 분할 수행
     full_train_x_raw = data_x[:split_idx]
     full_train_y_raw = data_y[:split_idx]
     test_x_raw = data_x[split_idx - window_size:]
     test_y_raw = data_y[split_idx - window_size:]
 
-    # Train / Val 분리 (내부에서 8:2)
     val_split_idx = int(len(full_train_x_raw) * 0.8)
     train_x_raw = full_train_x_raw[:val_split_idx]
     train_y_raw = full_train_y_raw[:val_split_idx]
     val_x_raw = full_train_x_raw[val_split_idx - window_size:]
     val_y_raw = full_train_y_raw[val_split_idx - window_size:]
 
-    # --- [4] 스케일링 (StandardScaler로 Outlier 대응 강화) ---
+    # --- [3] 스케일링 ---
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
     
@@ -65,7 +57,7 @@ def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
     val_y_scaled = scaler_y.transform(val_y_raw)
     test_y_scaled = scaler_y.transform(test_y_raw)
 
-    # --- [5] 윈도우 생성 ---
+    # --- [4] 윈도우 생성 ---
     def create_window(x_data, y_data):
         X, y = [], []
         for i in range(len(x_data) - window_size):
@@ -79,7 +71,7 @@ def preprocess_ultimate(csv_path='sale_event_traffic.csv', window_size=60):
 
     print(f"📊 최종 데이터셋 -> Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
 
-    # --- [6] 파일 저장 ---
+    # --- [5] 파일 저장 ---
     np.save('X_train.npy', X_train); np.save('y_train.npy', y_train)
     np.save('X_val.npy', X_val); np.save('y_val.npy', y_val)
     np.save('X_test.npy', X_test); np.save('y_test.npy', y_test)
