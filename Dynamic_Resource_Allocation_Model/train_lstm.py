@@ -7,54 +7,50 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 
 def train_ultimate():
-    print("🚀 밸런스 조정 LSTM 모델 학습 시작...")
+    print("🚀 극한의 과적합(암기) 버전 학습 준비...")
     if not os.path.exists('X_train.npy'):
         raise FileNotFoundError("❌ 전처리 코드를 먼저 실행하세요.")
 
-    # 1. 데이터 로드
     X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
     X_val, y_val = np.load('X_val.npy'), np.load('y_val.npy')
 
-    # --- [수정] 강박적인 가중치(Sample Weight) 제거 ---
-    # 모델이 특정 구간에 매몰되지 않고 전체적인 흐름과 변동을 모두 배우게 합니다.
-
-    # --- [수정] 모델 아키텍처 경량화 (과적합 방지) ---
+    # --- [핵심 수정] 무식할 정도로 큰 모델 구조 ---
     model = Sequential([
-        # 노드 수를 적정 수준(64, 32)으로 줄여 모델이 데이터를 암기하지 않고 패턴을 배우게 함
-        LSTM(64, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
-        Dropout(0.2), # 일반화 능력을 위해 드롭아웃 유지
-        LSTM(32),
-        Dense(32, activation="relu"),
+        # 엄청나게 무거운 레이어로 데이터 전체를 memorize하게 만듦
+        LSTM(256, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        Dropout(0.0), # 드롭아웃 완전 제거 (과적합 유도 핵심)
+        LSTM(128, return_sequences=True),
+        LSTM(64),
+        Dense(64, activation="relu"),
         Dense(1)
     ])
 
-    # --- [수정] 학습 파라미터 최적화 ---
-    optimizer = Adam(learning_rate=0.001) # 표준 학습률로 복귀
+    # --- [핵심 수정] 무식할 정도로 오차에 집착하는 설정 ---
+    # Huber 대신 MSE 사용, 매우 낮은 학습률로 오랫동안 학습
+    optimizer = Adam(learning_rate=0.0001) 
     model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
     
     early_stop = EarlyStopping(
         monitor='val_loss', 
-        patience=15, 
+        patience=50, # 거의 멈출 때까지 끝까지 학습
         restore_best_weights=True,
         verbose=1
     )
     
-    print("🧠 학습 진행 중...")
+    print("🧠 학습 진행 중 (매우 오래 걸릴 수 있습니다)...")
     
-    # --- [수정] 배치 사이즈 확대 (16 -> 64) ---
-    # 배치 사이즈를 키우면 학습이 훨씬 안정적이며, 바늘 같은 노이즈 속에서 패턴을 더 잘 찾습니다.
     model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
-        epochs=200, 
-        batch_size=64, # 핵심 수정 포인트: 학습 안정성 강화
+        epochs=500, # 학습 횟수 대폭 증가
+        batch_size=16, # 배치 사이즈를 줄여서 데이터 하나하나의 굴곡을 다 보도록 함
         shuffle=True, 
         callbacks=[early_stop],
         verbose=1
     )
     
     model.save('lstm_model.h5')
-    print("✅ 밸런스 최적화 모델이 'lstm_model.h5'로 저장되었습니다.")
+    print("✅ 극한의 암기 모델 저장 완료!")
 
 if __name__ == "__main__":
     train_ultimate()
