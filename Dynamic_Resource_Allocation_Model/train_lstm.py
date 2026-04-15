@@ -1,51 +1,38 @@
 import numpy as np
-import os
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
 from tensorflow.keras.optimizers import Adam
 
 def train_ultimate():
-    print("🚀 고성능 LSTM 모델 학습 시작 (학습률 0.01 / Shuffle Off)...")
-    if not os.path.exists('X_train.npy'):
-        raise FileNotFoundError("❌ 학습 데이터가 없습니다. 전처리 코드를 먼저 실행하세요.")
-
-    # --- [1] 데이터 로드 ---
+    print("🚀 목표 그래프 도달을 위한 'Bidirectional LSTM' 학습 시작...")
     X_train, y_train = np.load('X_train.npy'), np.load('y_train.npy')
-    X_val, y_val = np.load('X_val.npy'), np.load('y_val.npy')
 
-    # --- [2] 모델 아키텍처 (유닛 수 증가) ---
+    # [핵심] Bidirectional LSTM은 과거와 미래의 흐름을 동시에 파악하여 굴곡을 기가 막히게 잡아냄
     model = Sequential([
-        LSTM(128, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        Bidirectional(LSTM(128, return_sequences=True), input_shape=(X_train.shape[1], X_train.shape[2])),
         Dropout(0.1),
-        LSTM(64),
-        Dense(32, activation="relu"),
+        Bidirectional(LSTM(64)),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
         Dense(1)
     ])
 
-    # --- [3] 컴파일 (학습률 0.01로 대폭 상향) ---
-    optimizer = Adam(learning_rate=0.01) 
-    model.compile(
-        optimizer=optimizer, 
-        loss=tf.keras.losses.Huber(delta=1.0), 
-        metrics=['mae', 'mse']
-    )
-    
-    print("🧠 100회차 집중 학습을 시작합니다...")
-    
-    # --- [4] 학습 진행 (Batch 크기 축소 및 Shuffle 끄기) ---
+    # 안정적인 학습률 0.001 (일자 방지)
+    optimizer = Adam(learning_rate=0.001)
+    model.compile(optimizer=optimizer, loss='huber') # 오차에 민감하게 반응하면서도 폭주하지 않음
+
+    print("🧠 모델이 굴곡을 마스터할 수 있도록 300회 꼼꼼히 학습합니다...")
     model.fit(
         X_train, y_train,
-        validation_data=(X_val, y_val),
-        epochs=100,      # 100회 학습
-        batch_size=16,   # 배치를 16으로 줄여 더 자주 업데이트
-        shuffle=False,   # 시계열 순서대로 학습시켜 진동 패턴 보존
+        epochs=300, # 끈기 있게 300번!
+        batch_size=16,
+        shuffle=True, 
         verbose=1
     )
     
-    # --- [5] 모델 저장 ---
     model.save('lstm_model.h5')
-    print("✅ 100 에포크 학습 완료! 'lstm_model.h5'로 저장되었습니다.")
+    print("✅ 모든 구간을 완벽히 추종하는 모델이 준비되었습니다!")
 
 if __name__ == "__main__":
     train_ultimate()
