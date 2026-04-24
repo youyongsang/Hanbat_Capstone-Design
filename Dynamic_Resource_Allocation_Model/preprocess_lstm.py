@@ -53,7 +53,7 @@ def preprocess_ultimate(csv_path, window_size=60):
     with open('scaler_x.pkl', 'wb') as f: pickle.dump(scaler_x, f)
     with open('scaler_y.pkl', 'wb') as f: pickle.dump(scaler_y, f)
     
-    print(f"✅ 전처리 완료! (X_train: {X_train.shape}, X_test: {X_test.shape})")
+    print(f"✅ 전처리 완료 (X_train: {X_train.shape}, X_test: {X_test.shape})")
 
 if __name__ == "__main__":
     target_file = sys.argv[1] if len(sys.argv) > 1 else 'week_traffic.csv'
