@@ -6,7 +6,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
 from tensorflow.keras.optimizers import Adam
 
 def train_ultimate():
-    print("🚀 성능과 속도의 밸런스를 맞춘 학습을 시작합니다...")
+    print("🚀 성능 최적화 모드로 학습을 시작합니다 (Batch Size: 64)...")
     
     # 데이터 로드
     try:
@@ -16,7 +16,7 @@ def train_ultimate():
         print(f"❌ 데이터 로드 실패: {e}")
         return
 
-    # 모델 구조 (기존의 강력한 Bidirectional LSTM 유지)
+    # 모델 구조 유지
     model = Sequential([
         Bidirectional(LSTM(128, return_sequences=True), input_shape=(X_train.shape[1], X_train.shape[2])),
         Dropout(0.2),
@@ -27,26 +27,23 @@ def train_ultimate():
     ])
 
     # 옵티마이저 및 손실 함수 설정
-    # Huber Loss는 이상치(Outlier)에 강해 안정적인 학습을 돕습니다.
     optimizer = Adam(learning_rate=0.001)
     model.compile(optimizer=optimizer, loss='huber')
 
     print(f"🧠 학습 시작: 총 300 에포크 / 배치 사이즈: 64")
     
-    # [핵심 수정] batch_size=64 설정 및 멀티 프로세싱 적용
+    # [수정] TypeError를 일으킨 workers, use_multiprocessing 인자를 제거했습니다.
     model.fit(
         X_train, y_train,
-        epochs=300,        # 300번 끝까지 정밀하게 학습
-        batch_size=64,     # [수정] 성능 저하를 최소화하는 배치 크기
+        epochs=300,
+        batch_size=64,
         shuffle=True, 
-        workers=4,         # CPU 멀티코어 활용으로 속도 보강
-        use_multiprocessing=True,
         verbose=1
     )
     
     # 모델 저장
     model.save('lstm_model.h5')
-    print("✅ 모든 구간을 완벽히 추종하는 모델(lstm_model.h5)이 준비되었습니다!")
+    print("✅ 모델 저장 완료 (lstm_model.h5)")
 
 if __name__ == "__main__":
     train_ultimate()
