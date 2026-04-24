@@ -1,12 +1,15 @@
+# -*- coding: utf-8 -*-
+import numpy as np
+
 def allocate_resource(pred_rps):
     """
-    예측된 RPS를 기반으로 (CPU, Replicas)를 결정하는 정책 함수.
+    예측된 RPS를 기반으로 레플리카와 CPU를 계산.
     """
-    if pred_rps < 150:
-        return 0.5, 1
-    elif pred_rps < 250:
-        return 1.0, 2
-    elif pred_rps < 400:
-        return 2.0, 3
-    else:
-        return 3.0, 5
+    # 100 RPS당 1개 + 여유분 1개
+    target_replicas = int(np.ceil(pred_rps / 100)) + 1
+    
+    # 최소 2대, 최대 15대 범위 제한
+    replicas = min(max(2, target_replicas), 15)
+    cpu = round(replicas * 0.5, 1)
+    
+    return cpu, replicas
