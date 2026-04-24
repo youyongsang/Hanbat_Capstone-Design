@@ -23,7 +23,6 @@ def train_ultimate():
 
     model.compile(optimizer=Adam(learning_rate=0.001), loss='huber')
 
-    # [수정] 에포크를 300에서 100으로 조정
     print("🧠 모델 학습 중 (100 Epochs)...")
     model.fit(X_train, y_train, epochs=100, batch_size=64, shuffle=True, verbose=1)
     
