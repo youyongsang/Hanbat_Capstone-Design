@@ -67,7 +67,7 @@ def train_ultimate(csv_path=None):
     u1, u2 = cfg['units']; d1, d2 = cfg['dense']
     ws, nf = X_train.shape[1], X_train.shape[2]
 
-    print(f"🚀  학습 시작 | pek_w={cfg['peak_w']}")
+    print(f"🚀 [최종 강화 모드] 학습 시작 | peak_w={cfg['peak_w']}")
 
     model = Sequential([
         Bidirectional(LSTM(u1, return_sequences=True), input_shape=(ws, nf)),
@@ -77,8 +77,9 @@ def train_ultimate(csv_path=None):
         Dense(d1, activation='relu'),
         Dense(d2, activation='relu'),
         Dense(1)
-    ]
-                       
+    ])
+    
+    # 💡 강화된 로스 함수 적용
     model.compile(optimizer=Adam(cfg['lr']), 
                   loss=super_enhanced_loss(y_train, cfg['peak_q'], cfg['peak_w']))
     
