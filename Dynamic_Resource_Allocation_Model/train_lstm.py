@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-train_lstm.py
-─────────────────────────────────────────────────────────────────
-[sale_event]  units=128/64, batch=32,  lr=0.0005, patience=15
-[week_traffic] units=64/32,  batch=512, lr=0.001,  patience=10
-두 경우 모두 peak_weighted_loss + EarlyStopping 적용
-"""
 import os, sys, pickle
 import numpy as np
 import tensorflow as tf
@@ -16,7 +9,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 
 CONFIGS = {
     'sale_event':  {'units':(128,64), 'dense':(64,32), 'batch':32,  'lr':0.0005, 'patience':15, 'peak_q':0.65, 'peak_w':3.0},
-    'week_traffic':{'units':(64,32),  'dense':(32,16), 'batch':512, 'lr':0.001,  'patience':10, 'peak_q':0.70, 'peak_w':2.5},
+    'week_traffic':{'units':(64,32),  'dense':(32,16), 'batch':256, 'lr':0.0008, 'patience':15, 'peak_q':0.70, 'peak_w':2.5},
     'default':     {'units':(64,32),  'dense':(32,16), 'batch':128, 'lr':0.001,  'patience':10, 'peak_q':0.70, 'peak_w':2.5},
 }
 
@@ -64,7 +57,6 @@ def train_ultimate(csv_path=None):
     ])
     model.compile(optimizer=Adam(cfg['lr']),
                   loss=peak_loss(y_train, cfg['peak_q'], cfg['peak_w']))
-    model.summary()
 
     cbs = [
         EarlyStopping(monitor='val_loss', patience=cfg['patience'],
