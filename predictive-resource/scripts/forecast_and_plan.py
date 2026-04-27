@@ -16,12 +16,12 @@ DEFAULT_FORECAST_CSV = BASE_DIR / "data" / "output" / "predicted_traffic.csv"
 DEFAULT_PLAN_CSV = BASE_DIR / "data" / "output" / "resource_allocation_plan.csv"
 
 WINDOW_SIZE = 12
-CONTAINER_CAPACITY = 80
-SAFETY_MARGIN = 1.2
+CONTAINER_CAPACITY = 70
+SAFETY_MARGIN = 1.35
 MIN_REPLICAS = 1
-MAX_REPLICAS = 5
+MAX_REPLICAS = 6
 MIN_CPU = 0.5
-MAX_CPU = 3.0
+MAX_CPU = 4.0
 
 
 def load_lstm_predictor():
@@ -46,22 +46,22 @@ def load_lstm_predictor():
 
 def compute_allocation(pred_rps: float) -> tuple[float, int]:
     safe_rps = pred_rps * SAFETY_MARGIN
+    per_replica_thresholds = [
+        (40, 0.5),
+        (80, 1.0),
+        (120, 2.0),
+        (160, 3.0),
+        (CONTAINER_CAPACITY, 4.0),
+    ]
 
-    replicas = int(np.ceil(safe_rps / CONTAINER_CAPACITY))
-    replicas = max(MIN_REPLICAS, min(MAX_REPLICAS, replicas))
+    for limit_rps, cpu in per_replica_thresholds:
+        total_capacity = limit_rps * MAX_REPLICAS
+        if safe_rps <= total_capacity:
+            replicas = int(np.ceil(safe_rps / limit_rps))
+            replicas = max(MIN_REPLICAS, min(MAX_REPLICAS, replicas))
+            return min(MAX_CPU, max(MIN_CPU, cpu)), replicas
 
-    rps_per_container = safe_rps / replicas if replicas > 0 else 0.0
-    if rps_per_container <= 40:
-        cpu = 0.5
-    elif rps_per_container <= 80:
-        cpu = 1.0
-    elif rps_per_container <= 120:
-        cpu = 2.0
-    else:
-        cpu = 3.0
-
-    cpu = min(MAX_CPU, max(MIN_CPU, cpu))
-    return cpu, replicas
+    return MAX_CPU, MAX_REPLICAS
 
 
 def load_schedule(csv_path: Path) -> pd.DataFrame:

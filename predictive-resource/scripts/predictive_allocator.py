@@ -9,7 +9,7 @@ DEFAULT_PLAN_CSV = BASE_DIR / "data" / "output" / "resource_allocation_plan.csv"
 OUTPUT_CSV = BASE_DIR / "data" / "output" / "predictive_allocation_log.csv"
 
 MIN_REPLICAS = 1
-MAX_REPLICAS = 5
+MAX_REPLICAS = 6
 MIN_CPU = 0.5
 
 IMAGE_NAME = "reactive-server"

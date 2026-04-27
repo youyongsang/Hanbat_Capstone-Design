@@ -25,7 +25,7 @@ MAX_CONCURRENCY = 1000
 # 컨테이너/포트 규칙
 CONTAINER_PREFIX = "app_server_"
 BASE_PORT = 8001
-MAX_REPLICAS = 5
+MAX_REPLICAS = 6
 
 
 def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
