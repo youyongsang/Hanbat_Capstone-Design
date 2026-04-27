@@ -1,134 +1,96 @@
 # -*- coding: utf-8 -*-
 """
 preprocess_lstm.py
-─────────────────────────────────────────────────────────────────
-sale_event / week_traffic 두 CSV 모두 완벽 추종을 위한 분기 로직
+──────────────────────────────────────────────────────────────────
+[sale_event]  window=5,  phase 분할(peak→test포함), scaler=전체fit
+[week_traffic] window=60, 시간순 8:2,              scaler=train fit
 
-[sale_event] window=20, phase분할(peak→test포함), 데이터 4배 증강
-[week_traffic] window=60, 시간순 8:2 분할 (기존 방식 유지)
+사용법:
+  python preprocess_lstm.py sale_event_traffic.csv
+  python preprocess_lstm.py week_traffic.csv
 """
 import os, sys, pickle
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-FEATURE_COLS = ['target_rps','diff','diff2','ma5','ma20',
-                'day_of_week','is_event','is_weekend']
+FEATURE_COLS = ['target_rps', 'diff', 'diff2']
 
-def get_config(csv_path):
-    fname = os.path.basename(csv_path).lower()
-    if 'sale' in fname or 'event' in fname:
-        return {'window': 20, 'split': 'phase', 'augment': True,  'aug_copies': 4}
-    else:
-        return {'window': 60, 'split': 'time',  'augment': False, 'aug_copies': 0}
 
-def build_features(df, csv_path):
-    if 'day_of_week' not in df.columns:
-        df['day_of_week'] = (df.index // 2001 % 7).astype(int) if 'time_sec' in df.columns else 0
-    df['day_of_week'] = pd.to_numeric(df['day_of_week'], errors='coerce').fillna(0).astype(int)
+def is_sale(path): 
+    return 'sale' in os.path.basename(path).lower()
 
-    if 'is_event' not in df.columns:
-        fname = os.path.basename(csv_path).lower()
-        df['is_event'] = 1 if ('sale' in fname or 'scenario' in df.columns or 'phase' in df.columns) else 0
-    df['is_event'] = pd.to_numeric(df['is_event'], errors='coerce').fillna(0).astype(int)
 
-    if 'is_weekend' not in df.columns:
-        df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-    df['is_weekend'] = pd.to_numeric(df['is_weekend'], errors='coerce').fillna(0).astype(int)
-
+def add_features(df):
     df['diff']  = df['target_rps'].diff().fillna(0)
     df['diff2'] = df['diff'].diff().fillna(0)
-    df['ma5']   = df['target_rps'].rolling(5,  min_periods=1).mean()
-    df['ma20']  = df['target_rps'].rolling(20, min_periods=1).mean()
     return df
 
-def create_windows(x, y, window):
+
+def make_windows(x, y, w):
     X, Y = [], []
-    for i in range(len(x) - window):
-        X.append(x[i:i+window])
-        Y.append(y[i+window])
+    for i in range(len(x) - w):
+        X.append(x[i:i+w])
+        Y.append(y[i+w])
     return np.array(X), np.array(Y)
 
-def augment(X, y, n_copies):
-    rng = np.random.default_rng(42)
-    Xs, Ys = [X], [y]
-    for _ in range(n_copies):
-        noise = rng.normal(0, 0.008, X.shape)
-        scale = rng.uniform(0.95, 1.05, (len(X), 1, 1))
-        Xa = np.clip(X + noise, 0, 1) * scale
-        ya = np.clip(y * scale.reshape(-1, 1), 0, 1)
-        Xs.append(np.clip(Xa, 0, 1))
-        Ys.append(ya)
-    return np.concatenate(Xs), np.concatenate(Ys)
-
-def phase_split(df, window):
-    TRAIN_P = {'normal','baseline','ramp_up','warmup','stable_low'}
-    phase_col = 'phase' if 'phase' in df.columns else None
-
-    if phase_col is None:
-        split = int(len(df) * 0.4)
-        return df.iloc[:split].reset_index(drop=True), \
-               pd.concat([df.iloc[max(0,split-window):split], df.iloc[split:]], ignore_index=True)
-
-    train_mask = df[phase_col].str.lower().isin(TRAIN_P)
-    if train_mask.sum() < window * 2:
-        split = int(len(df) * 0.4)
-        return df.iloc[:split].reset_index(drop=True), \
-               pd.concat([df.iloc[max(0,split-window):split], df.iloc[split:]], ignore_index=True)
-
-    train_df = df[train_mask].reset_index(drop=True)
-    test_df  = pd.concat([df[train_mask].tail(window), df[~train_mask]], ignore_index=True)
-    print(f"   train phases: {df[train_mask][phase_col].unique().tolist()} → {len(train_df)}행")
-    print(f"   test  phases: {df[~train_mask][phase_col].unique().tolist()} → {len(df[~train_mask])}행")
-    return train_df, test_df
 
 def preprocess_ultimate(csv_path):
-    print(f"\n{'='*50}\n🛠️  전처리: {os.path.basename(csv_path)}\n{'='*50}")
-    if not os.path.exists(csv_path):
-        print(f"❌ 파일 없음: {csv_path}"); return False
-
-    cfg    = get_config(csv_path)
-    window = cfg['window']
-    print(f"   window={window}  split={cfg['split']}  augment={cfg['augment']}")
-
+    print(f"\n{'='*50}\n🛠️  {os.path.basename(csv_path)}\n{'='*50}")
     df = pd.read_csv(csv_path)
-    df = build_features(df, csv_path)
+    df = add_features(df)
+    dx = df[FEATURE_COLS].values
+    dy = df['target_rps'].values.reshape(-1, 1)
 
-    if cfg['split'] == 'phase':
-        train_df, test_df = phase_split(df, window)
-        train_x = train_df[FEATURE_COLS].values
-        train_y = train_df['target_rps'].values.reshape(-1, 1)
-        test_x  = test_df[FEATURE_COLS].values
-        test_y  = test_df['target_rps'].values.reshape(-1, 1)
+    if is_sale(csv_path):
+        # ── sale_event: window=5, phase 분할 ──────────────────────────
+        W = 5
+        TRAIN_P = {'normal', 'ramp_up'}
+        pc = 'phase' if 'phase' in df.columns else None
+
+        if pc and df[pc].str.lower().isin(TRAIN_P).sum() > W * 2:
+            tm = df[pc].str.lower().isin(TRAIN_P)
+            ti = df[tm].index.tolist()
+            ei = df[~tm].index.tolist()
+            ei_full = df[tm].tail(W).index.tolist() + ei
+            print(f"   train: {df[tm][pc].unique().tolist()} ({len(ti)}행)")
+            print(f"   test:  {df[~tm][pc].unique().tolist()} ({len(ei)}행)")
+            tx, ty = dx[ti], dy[ti]
+            ex, ey = dx[ei_full], dy[ei_full]
+        else:
+            s = int(len(df)*0.4)
+            tx, ty = dx[:s], dy[:s]
+            ex, ey = dx[max(0,s-W):], dy[max(0,s-W):]
+
+        # 전체 데이터로 fit (원래 잘 됐던 방식)
+        sx, sy = MinMaxScaler(), MinMaxScaler()
+        sx.fit(dx);  sy.fit(dy)
+
+        X_train, y_train = make_windows(sx.transform(tx), sy.transform(ty), W)
+        X_test,  y_test  = make_windows(sx.transform(ex), sy.transform(ey), W)
+
     else:
-        split   = int(len(df) * 0.8)
-        data_x  = df[FEATURE_COLS].values
-        data_y  = df['target_rps'].values.reshape(-1, 1)
-        train_x, train_y = data_x[:split], data_y[:split]
-        test_x,  test_y  = data_x[split-window:], data_y[split-window:]
-        print(f"   시간순 8:2: train={split}행  test={len(df)-split}행")
-
-    scaler_x, scaler_y = MinMaxScaler(), MinMaxScaler()
-    scaler_x.fit(train_x);  scaler_y.fit(train_y)
-
-    X_train, y_train = create_windows(scaler_x.transform(train_x), scaler_y.transform(train_y), window)
-    X_test,  y_test  = create_windows(scaler_x.transform(test_x),  scaler_y.transform(test_y),  window)
-
-    if cfg['augment'] and len(X_train) < 2000:
-        before = len(X_train)
-        X_train, y_train = augment(X_train, y_train, cfg['aug_copies'])
-        print(f"   📈 증강: {before} → {len(X_train)} 샘플")
+        # ── week_traffic: window=60, 시간순 8:2 ───────────────────────
+        W = 60
+        s = int(len(df) * 0.8)
+        tx, ty = dx[:s], dy[:s]
+        ex, ey = dx[s-W:], dy[s-W:]
+        sx, sy = MinMaxScaler(), MinMaxScaler()
+        sx.fit(tx);  sy.fit(ty)
+        X_train, y_train = make_windows(sx.transform(tx), sy.transform(ty), W)
+        X_test,  y_test  = make_windows(sx.transform(ex), sy.transform(ey), W)
+        print(f"   window=60, train={s}행, test={len(df)-s}행")
 
     np.save('X_train.npy', X_train);  np.save('y_train.npy', y_train)
     np.save('X_test.npy',  X_test);   np.save('y_test.npy',  y_test)
-    with open('scaler_x.pkl','wb') as f: pickle.dump(scaler_x, f)
-    with open('scaler_y.pkl','wb') as f: pickle.dump(scaler_y, f)
-    with open('feature_cols.pkl','wb') as f: pickle.dump(FEATURE_COLS, f)
+    with open('scaler_x.pkl','wb') as f: pickle.dump(sx, f)
+    with open('scaler_y.pkl','wb') as f: pickle.dump(sy, f)
     with open('metadata.pkl','wb') as f:
-        pickle.dump({'feature_cols':FEATURE_COLS,'window_size':window,'csv_path':csv_path}, f)
+        pickle.dump({'feature_cols':FEATURE_COLS,'window_size':W,'csv_path':csv_path}, f)
 
-    print(f"\n✅ 완료: X_train={X_train.shape}  X_test={X_test.shape}")
+    print(f"✅ X_train={X_train.shape}  X_test={X_test.shape}")
     return True
+
 
 if __name__ == "__main__":
     preprocess_ultimate(sys.argv[1] if len(sys.argv) > 1 else 'week_traffic.csv')
