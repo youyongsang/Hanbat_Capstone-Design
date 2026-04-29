@@ -34,10 +34,10 @@ CPU_USAGE_EASY   = 30.0
 MIN_RPS_SCALE_IN = 5.0
 
 CPU_STEP  = 0.5
-MIN_CPU   = 0.5
-MAX_CPU   = 4.0
-MIN_REPS  = 1
-MAX_REPS  = 6
+MIN_CPU   = 2.0
+MAX_CPU   = 6.0
+MIN_REPS  = 3
+MAX_REPS  = 8
 
 CHECK_INTERVAL = 2
 COOLDOWN_SEC   = 5
@@ -281,6 +281,12 @@ class HybridController:
 
             pred_cpu      = self.state.current_cpu
             pred_replicas = self.state.current_replicas
+
+            # PredictiveAllocator가 시간축에 맞춰 자원을 갱신했다면
+            # 보정 레이어도 그 기준 상태를 즉시 따라가도록 동기화한다.
+            if (pred_cpu != self.curr_cpu) or (pred_replicas != self.curr_replicas):
+                self.curr_cpu = pred_cpu
+                self.curr_replicas = pred_replicas
 
             metrics = fetch_metrics()
             if not metrics:

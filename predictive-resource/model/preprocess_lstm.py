@@ -1,76 +1,107 @@
-import os
-import sys
-import pickle
-import pandas as pd
-import numpy as np
+# -*- coding: utf-8 -*-
+"""
+preprocess_lstm.py — 입력 문제 완전 해결 (단점 1, 2, 3, 5)
+────────────────────────────────────────────────────────────
+- SmartCSVLoader: 어떤 CSV든 자동 스키마 변환
+- AdaptiveScaler: 이상치 내성 + OOD 탐지
+- feature_cols.pkl, metadata.pkl 저장 → 파이프라인 일관성 보장
+
+사용법:
+  python preprocess_lstm.py                          # week_traffic.csv
+  python preprocess_lstm.py sale_event_traffic.csv
+  python preprocess_lstm.py my_custom_traffic.csv    # 어떤 CSV든 OK
+"""
+import os, sys, pickle
 from pathlib import Path
-from sklearn.preprocessing import MinMaxScaler
+import numpy as np
 
-# =========================
-# 경로 설정
-# =========================
+from schema_adapter import SmartCSVLoader, STANDARD_FEATURES
+from robust_scaler import AdaptiveScaler
 
-BASE_DIR   = Path(__file__).resolve().parent.parent   # predictive-resource/
-OUTPUT_DIR = Path(__file__).resolve().parent          # predictive-resource/model/
+MODEL_DIR = Path(__file__).resolve().parent
+BASE_DIR = MODEL_DIR.parent
+WINDOW_SIZE = 60
 
-WINDOW_SIZE = 12
 
-def preprocess(csv_path: Path, train_ratio=0.7, val_ratio=0.15):
-    if not csv_path.exists():
-        raise FileNotFoundError(f"파일 없음: {csv_path}")
+def create_windows(scaled_x: np.ndarray, scaled_y: np.ndarray, window_size: int):
+    X, y = [], []
+    for i in range(len(scaled_x) - window_size):
+        X.append(scaled_x[i : i + window_size])
+        y.append(scaled_y[i + window_size])
+    return np.array(X), np.array(y)
 
-    df   = pd.read_csv(csv_path)
-    data = df["target_rps"].values.reshape(-1, 1)
 
-    total_len  = len(data)
-    val_start  = int(total_len * train_ratio)
-    test_start = int(total_len * (train_ratio + val_ratio))
+def preprocess_ultimate(csv_path: str, window_size: int = WINDOW_SIZE) -> bool:
+    print(f"\n{'='*55}")
+    print(f"🛠️  전처리 시작: {csv_path}")
+    print(f"{'='*55}")
 
-    # 시계열 순서 유지하며 분리
-    # val/test는 window 크기만큼 앞으로 당겨서 자름 (과거 데이터 연속성 보장)
-    train_raw = data[:val_start]
-    val_raw   = data[val_start - WINDOW_SIZE : test_start]
-    test_raw  = data[test_start - WINDOW_SIZE :]
+    # 1. SmartCSVLoader → 어떤 CSV든 표준 스키마로 변환
+    loader = SmartCSVLoader(csv_path, verbose=True)
+    try:
+        df = loader.load()
+    except Exception as e:
+        print(f"❌ CSV 로드/변환 실패: {e}")
+        return False
 
-    # scaler는 train 데이터로만 fit (데이터 누설 방지)
-    scaler = MinMaxScaler()
-    scaler.fit(train_raw)
+    # 2. 요일별 RPS 통계 출력
+    if df['day_of_week'].nunique() > 1:
+        day_names = ['월', '화', '수', '목', '금', '토', '일']
+        print("📅 요일별 RPS 통계:")
+        for d in sorted(df['day_of_week'].unique()):
+            grp = df[df['day_of_week'] == d]
+            lbl = day_names[d] if d < 7 else str(d)
+            print(f"   {lbl}요일: avg={grp['target_rps'].mean():.0f}"
+                  f"  max={grp['target_rps'].max():.0f}"
+                  f"  is_event={int(grp['is_event'].mode()[0])}")
+        print()
 
-    train_scaled = scaler.transform(train_raw)
-    val_scaled   = scaler.transform(val_raw)
-    test_scaled  = scaler.transform(test_raw)
+    # 3. 피처 / 타깃 분리
+    data_x = df[STANDARD_FEATURES].values
+    data_y = df['target_rps'].values.reshape(-1, 1)
+    split_idx = int(len(df) * 0.8)
 
-    def create_window(dataset):
-        X, y = [], []
-        if len(dataset) <= WINDOW_SIZE:
-            return np.array([]), np.array([])
-        for i in range(len(dataset) - WINDOW_SIZE):
-            X.append(dataset[i : i + WINDOW_SIZE])
-            y.append(dataset[i + WINDOW_SIZE])
-        return np.array(X), np.array(y)
+    # 4. AdaptiveScaler (train 구간만 fit → Data Leakage 방지)
+    scaler_x = AdaptiveScaler()
+    scaler_y = AdaptiveScaler()
+    scaler_x.fit(data_x[:split_idx])
+    scaler_y.fit(data_y[:split_idx])
 
-    X_train, y_train = create_window(train_scaled)
-    X_val,   y_val   = create_window(val_scaled)
-    X_test,  y_test  = create_window(test_scaled)
+    scaled_x = scaler_x.transform(data_x, check_ood=False)
+    scaled_y = scaler_y.transform(data_y, check_ood=False)
 
-    np.save(OUTPUT_DIR / "X_train.npy", X_train)
-    np.save(OUTPUT_DIR / "y_train.npy", y_train)
-    np.save(OUTPUT_DIR / "X_val.npy",   X_val)
-    np.save(OUTPUT_DIR / "y_val.npy",   y_val)
-    np.save(OUTPUT_DIR / "X_test.npy",  X_test)
-    np.save(OUTPUT_DIR / "y_test.npy",  y_test)
+    # 5. 슬라이딩 윈도우 생성
+    X_train, y_train = create_windows(scaled_x[:split_idx],
+                                      scaled_y[:split_idx], window_size)
+    X_test,  y_test  = create_windows(scaled_x[split_idx - window_size:],
+                                      scaled_y[split_idx - window_size:], window_size)
 
-    with open(OUTPUT_DIR / "scaler.pkl", "wb") as f:
-        pickle.dump(scaler, f)
+    # 6. 저장
+    np.save(MODEL_DIR / 'X_train.npy', X_train)
+    np.save(MODEL_DIR / 'y_train.npy', y_train)
+    np.save(MODEL_DIR / 'X_test.npy',  X_test)
+    np.save(MODEL_DIR / 'y_test.npy',  y_test)
 
-    print(f"전처리 완료")
-    print(f"  Train : {X_train.shape}")
-    print(f"  Val   : {X_val.shape}")
-    print(f"  Test  : {X_test.shape}")
+    with open(MODEL_DIR / 'scaler_x.pkl', 'wb') as f: pickle.dump(scaler_x, f)
+    with open(MODEL_DIR / 'scaler_y.pkl', 'wb') as f: pickle.dump(scaler_y, f)
+
+    metadata = {
+        'feature_cols': STANDARD_FEATURES,
+        'window_size':  window_size,
+        'csv_path':     csv_path,
+        'rps_max_train': float(data_y[:split_idx].max()),
+        'rps_min_train': float(data_y[:split_idx].min()),
+    }
+    with open(MODEL_DIR / 'feature_cols.pkl', 'wb') as f: pickle.dump(STANDARD_FEATURES, f)
+    with open(MODEL_DIR / 'metadata.pkl',     'wb') as f: pickle.dump(metadata, f)
+
+    print(f"✅ 전처리 완료")
+    print(f"   X_train : {X_train.shape}  y_train : {y_train.shape}")
+    print(f"   X_test  : {X_test.shape}   y_test  : {y_test.shape}")
+    print(f"   학습 RPS 범위: [{metadata['rps_min_train']:.0f}, {metadata['rps_max_train']:.0f}]")
+    return True
 
 
 if __name__ == "__main__":
-    target_csv = Path(sys.argv[1]) if len(sys.argv) > 1 else (
-        BASE_DIR / "data" / "input" / "sale_event_traffic.csv"
-    )
-    preprocess(target_csv)
+    target = sys.argv[1] if len(sys.argv) > 1 else str(BASE_DIR / 'data' / 'input' / 'sale_event_traffic.csv')
+    preprocess_ultimate(target)

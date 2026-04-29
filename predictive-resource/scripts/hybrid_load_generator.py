@@ -25,7 +25,7 @@ MAX_CONCURRENCY = 1000
 # 컨테이너/포트 규칙
 CONTAINER_PREFIX = "app_server_"
 BASE_PORT = 8001
-MAX_REPLICAS = 6
+MAX_REPLICAS = 8
 
 
 def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -280,6 +280,12 @@ def main():
     if not csv_path.exists():
         print(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
         sys.exit(1)
+
+    # Windows의 ProactorEventLoop는 연결이 강제로 닫힐 때
+    # _call_connection_lost 예외를 noisy하게 뿌리는 경우가 있어
+    # load generator에서는 SelectorEventLoop를 사용해 안정성을 높인다.
+    if sys.platform.startswith("win") and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
         asyncio.run(run_schedule(csv_path, output_log))

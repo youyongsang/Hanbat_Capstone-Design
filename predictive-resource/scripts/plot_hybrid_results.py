@@ -22,6 +22,15 @@ def save_figure(path: Path):
     plt.close()
 
 
+def count_active_replicas(value) -> int:
+    if pd.isna(value):
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    return len([part for part in text.split(",") if part.strip()])
+
+
 def plot_predicted_vs_actual(df: pd.DataFrame):
     plt.figure(figsize=(12, 6))
     plt.plot(df["time_sec"], df["actual_rps"], label="actual_rps", linewidth=2)
@@ -80,31 +89,45 @@ def plot_resource_plan(plan_df: pd.DataFrame):
     save_figure(RESULT_DIR / "resource_plan.png")
 
 
-def plot_plan_vs_actual_resource(correction_df: pd.DataFrame):
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+def plot_plan_vs_actual_resource(
+    plan_df: pd.DataFrame,
+    correction_df: pd.DataFrame,
+    loadgen_df: pd.DataFrame,
+):
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
 
     axes[0].step(correction_df["elapsed_sec"], correction_df["pred_cpu"], where="post", label="planned_cpu")
     axes[0].step(correction_df["elapsed_sec"], correction_df["curr_cpu"], where="post", label="actual_cpu")
+    axes[0].set_xlabel("Elapsed Time (sec)")
     axes[0].set_ylabel("CPU")
     axes[0].set_title("Planned vs Actual CPU")
     axes[0].legend()
     axes[0].grid(alpha=0.3)
 
+    actual_replica_df = loadgen_df.copy()
+    actual_replica_df["actual_replicas"] = actual_replica_df["active_ports"].apply(count_active_replicas)
+
     axes[1].step(
-        correction_df["elapsed_sec"],
-        correction_df["pred_replicas"],
+        plan_df["time_sec"],
+        plan_df["planned_replicas"],
         where="post",
         label="planned_replicas",
+        color="tab:blue",
+        linewidth=1.8,
+        alpha=0.8,
     )
     axes[1].step(
-        correction_df["elapsed_sec"],
-        correction_df["curr_replicas"],
+        actual_replica_df["time_sec"],
+        actual_replica_df["actual_replicas"],
         where="post",
         label="actual_replicas",
+        color="tab:orange",
+        linewidth=2.4,
+        linestyle="--",
     )
     axes[1].set_xlabel("Time (sec)")
     axes[1].set_ylabel("Replicas")
-    axes[1].set_title("Planned vs Actual Replicas")
+    axes[1].set_title("Planned vs Actual Replicas (from active ports)")
     axes[1].legend()
     axes[1].grid(alpha=0.3)
 
@@ -212,7 +235,7 @@ def main():
     plot_predicted_vs_actual(predicted_df)
     plot_prediction_error(predicted_df)
     plot_resource_plan(plan_df)
-    plot_plan_vs_actual_resource(correction_df)
+    plot_plan_vs_actual_resource(plan_df, correction_df, loadgen_df)
     plot_correction_actions(correction_df)
     plot_loadgen_performance(loadgen_df)
     print_prediction_metrics(predicted_df)

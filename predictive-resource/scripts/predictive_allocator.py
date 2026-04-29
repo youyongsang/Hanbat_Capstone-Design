@@ -8,9 +8,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_PLAN_CSV = BASE_DIR / "data" / "output" / "resource_allocation_plan.csv"
 OUTPUT_CSV = BASE_DIR / "data" / "output" / "predictive_allocation_log.csv"
 
-MIN_REPLICAS = 1
-MAX_REPLICAS = 6
-MIN_CPU = 0.5
+MIN_REPLICAS = 3
+MAX_REPLICAS = 8
+MIN_CPU = 2.0
 
 IMAGE_NAME = "reactive-server"
 CONTAINER_PREFIX = "app_server_"

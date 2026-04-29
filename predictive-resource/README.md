@@ -76,19 +76,21 @@ python -m pip install -r .\requirements.txt
 
 ```bash
 cd predictive-resource
-python model/preprocess_lstm.py
+python model/preprocess_lstm.py data/input/sale_event_traffic.csv
 python model/train_lstm.py
+python model/evaluate_full.py data/input/sale_event_traffic.csv
 ```
 
 PowerShell:
 
 ```powershell
 Set-Location .\predictive-resource
-python .\model\preprocess_lstm.py
+python .\model\preprocess_lstm.py .\data\input\sale_event_traffic.csv
 python .\model\train_lstm.py
+python .\model\evaluate_full.py .\data\input\sale_event_traffic.csv
 ```
 
-현재 `forecast_and_plan.py`는 학습된 `lstm_model.h5`와 `scaler.pkl`이 있어야 동작합니다.
+현재 `forecast_and_plan.py`는 학습된 `lstm_model.h5`, `scaler_x.pkl`, `scaler_y.pkl`, `feature_cols.pkl`, `metadata.pkl`이 있어야 동작합니다.
 
 ### 3.3 Docker 이미지 빌드
 
@@ -177,8 +179,8 @@ python scripts/run_hybrid.py --plan-csv data/output/resource_allocation_plan.csv
 
 ### 5.1 예측과 실행 분리
 
-예측은 `forecast_and_plan.py`에서 수행하고, 실행은 `predictive_allocator.py`가 계획 CSV를 읽어서 처리합니다.  
-즉 실행 시점에는 미래 CSV 정답을 직접 참조하지 않습니다.
+예측 모델은 `model/` 폴더에서 트래픽 예측만 담당하고, 자원 할당은 `scripts/forecast_and_plan.py`가 담당합니다.  
+즉 모델과 자원 정책을 분리한 구조입니다.
 
 ### 5.2 자원 정책
 
