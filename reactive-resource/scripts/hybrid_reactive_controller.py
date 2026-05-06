@@ -9,6 +9,7 @@ import requests
 # 기본 설정
 # =========================
 
+BASE_DIR = Path(__file__).resolve().parent.parent
 IMAGE_NAME = "reactive-server"
 
 # 컨테이너 이름 / 포트 규칙
@@ -31,21 +32,27 @@ def get_metrics_url(container_index: int) -> str:
 
 INITIAL_CPU = 0.5
 MIN_CPU = 0.5
-MAX_CPU = 3.0
+MAX_CPU = 6.0
 CPU_STEP = 0.5
 
 MIN_REPLICAS = 1
-MAX_REPLICAS = 5
+MAX_REPLICAS = 8
 
 # -------------------------
 # Scale Out 기준
 # -------------------------
-LATENCY_UP_THRESHOLD = 80.0
-P95_UP_THRESHOLD = 200.0
+# Load Generator의 SLA 기준은 1000ms이다.
+# Reactive가 80/200ms처럼 너무 이른 구간에서 반응하면 SLA 위반이 거의
+# 드러나지 않는다. 반대로 SLA 직전에서만 반응하면 피크 구간에서도
+# replica가 충분히 늘지 못해 Reactive를 과도하게 불리하게 만든다.
+# 따라서 SLA보다 낮지만 충분히 성능 저하가 관측된 500/750ms 지점에서
+# scale-out을 시작하도록 조정한다.
+LATENCY_UP_THRESHOLD = 500.0
+P95_UP_THRESHOLD = 750.0
 FAIL_UP_THRESHOLD = 1
 
 # CPU를 먼저 올리는 기준
-CPU_UP_USAGE_THRESHOLD = 50.0
+CPU_UP_USAGE_THRESHOLD = 60.0
 
 # CPU가 이미 최대고, 실제 CPU 사용률도 높으면 컨테이너 증가 고려
 CPU_CONTAINER_OUT_THRESHOLD = 70.0
@@ -53,8 +60,8 @@ CPU_CONTAINER_OUT_THRESHOLD = 70.0
 # -------------------------
 # Scale In 기준
 # -------------------------
-LATENCY_DOWN_THRESHOLD = 45.0
-P95_DOWN_THRESHOLD = 100.0
+LATENCY_DOWN_THRESHOLD = 250.0
+P95_DOWN_THRESHOLD = 500.0
 CPU_DOWN_USAGE_THRESHOLD = 30.0
 MIN_RPS_FOR_SCALE_IN = 5.0
 
@@ -65,7 +72,13 @@ CHECK_INTERVAL = 2
 COOLDOWN_SEC = 5
 NO_TRAFFIC_LIMIT = 5
 
-OUTPUT_CSV = Path("data/output/hybrid_reactive_result.csv")
+OUTPUT_CSV = BASE_DIR / "data/output/hybrid_reactive_result.csv"
+LOADGEN_CSV = BASE_DIR / "data/output/loadgen_result.csv"
+
+# Load Generator는 클라이언트 end-to-end latency를 기록한다.
+# Controller 시작 이전의 이전 실험 CSV는 무시하고, 최신 행만 보정 판단에 사용한다.
+LOADGEN_METRIC_STALE_SEC = 10
+SLA_VIOLATION_UP_THRESHOLD = 1
 
 
 # =========================
@@ -194,6 +207,81 @@ def fetch_metrics(url: str) -> dict:
     return response.json()
 
 
+def fetch_latest_loadgen_metrics(csv_path: Path, min_mtime: float) -> dict:
+    """
+    Load Generator 결과 CSV의 최신 행을 읽어 클라이언트 기준 지표를 반환한다.
+    서버 /metrics는 FastAPI handler 내부 처리시간만 보므로, 대기열/네트워크를 포함한
+    end-to-end SLA 위반 판단에는 loadgen_result.csv의 값이 더 직접적이다.
+    """
+    if not csv_path.exists():
+        return {}
+
+    stat = csv_path.stat()
+    now = time.time()
+    if stat.st_mtime < min_mtime or now - stat.st_mtime > LOADGEN_METRIC_STALE_SEC:
+        return {}
+
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+    except Exception:
+        return {}
+
+    if not rows:
+        return {}
+
+    row = rows[-1]
+
+    def to_float(key: str, default: float = 0.0) -> float:
+        try:
+            return float(row.get(key, default) or default)
+        except ValueError:
+            return default
+
+    return {
+        "client_time_sec": to_float("time_sec"),
+        "client_target_rps": to_float("target_rps"),
+        "client_actual_sent": to_float("actual_sent"),
+        "client_success_count": to_float("success_count"),
+        "client_fail_count": to_float("fail_count"),
+        "client_sla_violation_count": to_float("sla_violation_count"),
+        "client_avg_latency_ms": to_float("avg_latency_ms"),
+        "client_p95_latency_ms": to_float("p95_latency_ms"),
+    }
+
+
+def merge_server_and_client_metrics(server_metrics: dict, client_metrics: dict) -> dict:
+    """
+    Controller 판단에는 서버 내부 처리시간과 클라이언트 end-to-end 시간을 함께 사용한다.
+    latency는 더 큰 값을 사용해 사용자가 실제로 겪는 지연을 놓치지 않도록 한다.
+    """
+    merged = dict(server_metrics)
+
+    if not client_metrics:
+        merged["sla_violation_count"] = 0
+        return merged
+
+    server_avg = float(server_metrics.get("avg_latency_ms", 0.0))
+    server_p95 = float(server_metrics.get("p95_latency_ms", 0.0))
+    server_fail = float(server_metrics.get("fail_count", 0.0))
+    server_rps = float(server_metrics.get("current_rps", 0.0))
+
+    client_avg = client_metrics["client_avg_latency_ms"]
+    client_p95 = client_metrics["client_p95_latency_ms"]
+    client_fail = client_metrics["client_fail_count"]
+    client_rps = client_metrics["client_actual_sent"]
+
+    merged.update(client_metrics)
+    merged["server_avg_latency_ms"] = server_avg
+    merged["server_p95_latency_ms"] = server_p95
+    merged["avg_latency_ms"] = max(server_avg, client_avg)
+    merged["p95_latency_ms"] = max(server_p95, client_p95)
+    merged["fail_count"] = max(server_fail, client_fail)
+    merged["current_rps"] = max(server_rps, client_rps)
+    merged["sla_violation_count"] = client_metrics["client_sla_violation_count"]
+    return merged
+
+
 # =========================
 # Docker stats 기반 CPU 사용률 조회
 # =========================
@@ -235,18 +323,21 @@ def decide_hybrid_action(metrics: dict, current_cpu: float, current_replicas: in
     avg_latency = metrics.get("avg_latency_ms", 0.0)
     p95_latency = metrics.get("p95_latency_ms", 0.0)
     fail_count = metrics.get("fail_count", 0)
+    sla_violation_count = metrics.get("sla_violation_count", 0)
     current_rps = metrics.get("current_rps", 0.0)
 
     overloaded = (
         avg_latency > LATENCY_UP_THRESHOLD
         or p95_latency > P95_UP_THRESHOLD
         or fail_count >= FAIL_UP_THRESHOLD
+        or sla_violation_count >= SLA_VIOLATION_UP_THRESHOLD
     )
 
     underloaded = (
         avg_latency < LATENCY_DOWN_THRESHOLD
         and p95_latency < P95_DOWN_THRESHOLD
         and fail_count == 0
+        and sla_violation_count == 0
         and cpu_usage < CPU_DOWN_USAGE_THRESHOLD
         and current_rps >= MIN_RPS_FOR_SCALE_IN
     )
@@ -255,25 +346,35 @@ def decide_hybrid_action(metrics: dict, current_cpu: float, current_replicas: in
     # 과부하: CPU 먼저 확장
     # -------------------------
     if overloaded:
-        if current_cpu < MAX_CPU and cpu_usage >= CPU_UP_USAGE_THRESHOLD:
+        if (
+            current_cpu < MAX_CPU
+            and (
+                cpu_usage >= CPU_UP_USAGE_THRESHOLD
+                or sla_violation_count >= SLA_VIOLATION_UP_THRESHOLD
+                or p95_latency > P95_UP_THRESHOLD
+            )
+        ):
             return {
                 "action": "CPU_SCALE_OUT",
                 "next_cpu": min(MAX_CPU, current_cpu + CPU_STEP),
                 "next_replicas": current_replicas,
-                "reason": "성능 저하 + CPU 사용률 높음 → CPU 먼저 증설"
+                "reason": "end-to-end 성능 저하 감지 → CPU 먼저 증설"
             }
 
         # CPU가 이미 최대인데도 여전히 과부하고 CPU usage 높으면 컨테이너 증가
         if (
             current_cpu >= MAX_CPU
-            and cpu_usage >= CPU_CONTAINER_OUT_THRESHOLD
+            and (
+                cpu_usage >= CPU_CONTAINER_OUT_THRESHOLD
+                or sla_violation_count >= SLA_VIOLATION_UP_THRESHOLD
+            )
             and current_replicas < MAX_REPLICAS
         ):
             return {
                 "action": "CONTAINER_SCALE_OUT",
                 "next_cpu": current_cpu,
                 "next_replicas": current_replicas + 1,
-                "reason": "CPU 최대 + 높은 CPU 사용률 + 성능 저하 → 컨테이너 증설"
+                "reason": "CPU 최대 + end-to-end 성능 저하 → 컨테이너 증설"
             }
 
     # -------------------------
@@ -325,6 +426,10 @@ def init_csv(output_path: Path):
             "fail_count",
             "avg_latency_ms",
             "p95_latency_ms",
+            "sla_violation_count",
+            "client_avg_latency_ms",
+            "client_p95_latency_ms",
+            "client_sla_violation_count",
             "current_rps",
             "reason"
         ])
@@ -362,11 +467,14 @@ def main():
 
         # metrics 수집
         try:
-            metrics = fetch_metrics(metrics_url)
+            server_metrics = fetch_metrics(metrics_url)
         except Exception as e:
             print(f"[WARN] Failed to fetch metrics: {e}")
             time.sleep(CHECK_INTERVAL)
             continue
+
+        client_metrics = fetch_latest_loadgen_metrics(LOADGEN_CSV, min_mtime=start_time)
+        metrics = merge_server_and_client_metrics(server_metrics, client_metrics)
 
         # 대표 컨테이너 CPU usage 수집
         try:
@@ -454,6 +562,10 @@ def main():
             metrics.get("fail_count", 0),
             metrics.get("avg_latency_ms", 0.0),
             metrics.get("p95_latency_ms", 0.0),
+            metrics.get("sla_violation_count", 0),
+            metrics.get("client_avg_latency_ms", 0.0),
+            metrics.get("client_p95_latency_ms", 0.0),
+            metrics.get("client_sla_violation_count", 0),
             metrics.get("current_rps", 0.0),
             reason
         ])
@@ -466,6 +578,9 @@ def main():
             f"fail={metrics.get('fail_count', 0)} | "
             f"avg={metrics.get('avg_latency_ms', 0.0)}ms | "
             f"p95={metrics.get('p95_latency_ms', 0.0)}ms | "
+            f"sla={metrics.get('sla_violation_count', 0)} | "
+            f"client_avg={metrics.get('client_avg_latency_ms', 0.0)}ms | "
+            f"client_p95={metrics.get('client_p95_latency_ms', 0.0)}ms | "
             f"rps={metrics.get('current_rps', 0.0)} | "
             f"reason={reason}"
         )

@@ -45,6 +45,39 @@ def plot_loadgen_latency(df: pd.DataFrame):
     plt.show()
 
 
+def plot_loadgen_performance(df: pd.DataFrame):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+    ax1.plot(df["time_sec"], df["target_rps"], label="target_rps")
+    ax1.plot(df["time_sec"], df["success_count"], label="success_count")
+    ax1.plot(df["time_sec"], df["fail_count"], label="fail_count", linestyle="--")
+
+    if "sla_violation_count" in df.columns:
+        ax1.plot(
+            df["time_sec"],
+            df["sla_violation_count"],
+            label="sla_violation_count",
+            linestyle=":"
+        )
+
+    ax1.set_ylabel("Count")
+    ax1.set_title("Load Generator Throughput")
+    ax1.legend()
+    ax1.grid()
+
+    ax2.plot(df["time_sec"], df["avg_latency_ms"], label="avg_latency_ms")
+    ax2.plot(df["time_sec"], df["p95_latency_ms"], label="p95_latency_ms")
+    ax2.set_xlabel("Time (sec)")
+    ax2.set_ylabel("Latency (ms)")
+    ax2.set_title("Load Generator Latency")
+    ax2.legend()
+    ax2.grid()
+
+    fig.tight_layout()
+    fig.savefig(RESULT_DIR / "loadgen_performance.png", dpi=300, bbox_inches="tight")
+    plt.show()
+
+
 def plot_hybrid_resource(df: pd.DataFrame):
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
@@ -122,6 +155,7 @@ def main():
     loadgen_df = pd.read_csv(LOADGEN_CSV)
     hybrid_df = pd.read_csv(HYBRID_CSV)
 
+    plot_loadgen_performance(loadgen_df)
     plot_loadgen_count(loadgen_df)
     plot_loadgen_latency(loadgen_df)
     plot_hybrid_resource(hybrid_df)

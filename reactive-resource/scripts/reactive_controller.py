@@ -23,7 +23,7 @@ INITIAL_CPU = 0.5
 
 # 최소 / 최대 CPU
 MIN_CPU = 0.5
-MAX_CPU = 2.0
+MAX_CPU = 6.0
 
 # 한 번 scale 시 증가/감소 폭
 CPU_STEP = 0.5
@@ -31,18 +31,21 @@ CPU_STEP = 0.5
 # -------------------------
 # Reactive 임계값 설정
 # -------------------------
-# 기존보다 더 빠르게 반응하도록 threshold를 낮춤
-# 현재 서버 metrics는 end-to-end latency보다 작게 나올 수 있으므로
-# threshold를 너무 높게 두면 scale out이 거의 안 일어남
+# Load Generator의 SLA 기준은 1000ms이다.
+# 너무 낮은 threshold(예: 80/120ms)를 쓰면 SLA 위반이 발생하기 전에
+# Reactive가 과도하게 빠르게 반응하여 사후 대응 한계가 드러나지 않는다.
+# 반대로 SLA 직전에서만 반응하면 Reactive를 과도하게 불리하게 만든다.
+# 따라서 단일 CPU Reactive 실험도 1000ms SLA보다 낮은 500/750ms 지점에서
+# scale-out하도록 맞춘다.
 
 # 평균 latency가 이 값보다 크면 scale out 후보
-LATENCY_UP_THRESHOLD = 80.0
+LATENCY_UP_THRESHOLD = 500.0
 
 # 평균 latency가 이 값보다 작고 안정적이면 scale in 후보
-LATENCY_DOWN_THRESHOLD = 35.0
+LATENCY_DOWN_THRESHOLD = 250.0
 
 # p95 latency가 이 값보다 크면 scale out 후보
-P95_UP_THRESHOLD = 120.0
+P95_UP_THRESHOLD = 750.0
 
 # 실패가 1건 이상이면 즉시 scale out 후보
 FAIL_UP_THRESHOLD = 1

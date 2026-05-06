@@ -118,23 +118,25 @@ def main():
         target=run_predictive,
         args=(args.plan_csv, state),
         name="PredictiveAllocator",
-        daemon=True,
+        daemon=False,
     )
     t_ctrl = threading.Thread(
         target=run_controller,
         args=(state,),
         name="HybridController",
-        daemon=True,
+        daemon=False,
     )
     threads += [t_pred, t_ctrl]
+    t_loadgen = None
 
     if args.with_loadgen:
-        threads.append(threading.Thread(
+        t_loadgen = threading.Thread(
             target=run_loadgen,
             args=(args.actual_csv,),
             name="LoadGenerator",
-            daemon=True,
-        ))
+            daemon=False,
+        )
+        threads.append(t_loadgen)
 
     for thread in threads:
         thread.start()
@@ -142,6 +144,12 @@ def main():
 
     t_pred.join()
     print("[Main] 계획 실행 완료 — 보정 레이어 종료 대기 (최대 30초)")
+
+    if t_loadgen is not None:
+        print("[Main] 로드 생성기 종료 대기")
+        t_loadgen.join()
+
+    print("[Main] 보정 레이어 종료 대기")
     t_ctrl.join(timeout=30)
 
     print_summary()

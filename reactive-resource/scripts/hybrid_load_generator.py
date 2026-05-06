@@ -19,13 +19,13 @@ OUTPUT_LOG = BASE_DIR / "data/output/loadgen_result.csv"
 # 실험 파라미터
 # -------------------------
 REQUEST_TIMEOUT = 5
-SLA_LATENCY_MS = 2000
+SLA_LATENCY_MS = 1000
 MAX_CONCURRENCY = 1000
 
 # 컨테이너/포트 규칙
 CONTAINER_PREFIX = "app_server_"
 BASE_PORT = 8001
-MAX_REPLICAS = 5
+MAX_REPLICAS = 8
 
 
 def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
