@@ -30,9 +30,26 @@ DEFAULT_PLAN_PLOT = BASE_DIR / "results" / "resource_allocation_plan_overview.pn
 
 SAFETY_MARGIN = 1.60
 MIN_REPLICAS = 3
-MAX_REPLICAS = 8
+MAX_REPLICAS = 7
 MIN_CPU = 2.0
 MAX_CPU = 6.0
+LOOKAHEAD_SEC = 30
+PEAK_THRESHOLD_RPS = 500.0
+PEAK_SLOPE_THRESHOLD = 60.0
+PEAK_FLOOR_TRIGGER_RPS = 400.0
+CPU_CAPACITY_POLICY = [
+    (2.0, 55),
+    (3.0, 80),
+    (4.0, 105),
+    (5.0, 130),
+    (6.0, 155),
+]
+PEAK_REPLICA_FLOORS = [
+    (570.0, 7),
+    (520.0, 6),
+    (460.0, 5),
+    (400.0, 4),
+]
 
 
 def load_model_artifacts():
@@ -63,25 +80,72 @@ def load_model_artifacts():
     return model, scaler_x, scaler_y, feature_cols, window_size
 
 
-def compute_allocation(pred_rps: float) -> tuple[float, int]:
-    safe_rps = pred_rps * SAFETY_MARGIN
-    cpu_capacity_policy = [
-        (2.0, 70),
-        (3.0, 105),
-        (4.0, 140),
-        (5.0, 175),
-        (6.0, 210),
-    ]
+def get_lookahead_target(pred_series: list[float], idx: int, lookahead: int = LOOKAHEAD_SEC) -> float:
+    window = pred_series[idx:min(idx + lookahead, len(pred_series))]
+    return max(window) if window else pred_series[idx]
 
-    # CPU를 먼저 충분히 올리고, 그래도 감당이 안 될 때만 replica를 늘린다.
-    # 즉 "최소 replica 수"를 우선으로 찾고, 그 replica 수 안에서 가장 낮은 CPU를 고른다.
-    for replicas in range(MIN_REPLICAS, MAX_REPLICAS + 1):
-        for cpu, per_replica_capacity in cpu_capacity_policy:
-            total_capacity = replicas * per_replica_capacity
-            if safe_rps <= total_capacity:
-                return min(MAX_CPU, max(MIN_CPU, cpu)), replicas
 
-    return MAX_CPU, MAX_REPLICAS
+def is_peak_coming(curr_pred: float, future_peak: float) -> bool:
+    return future_peak >= PEAK_THRESHOLD_RPS and (future_peak - curr_pred) >= PEAK_SLOPE_THRESHOLD
+
+
+def get_peak_replica_floor(lookahead_peak: float) -> int:
+    for threshold, floor in PEAK_REPLICA_FLOORS:
+        if lookahead_peak >= threshold:
+            return floor
+    return MIN_REPLICAS
+
+
+def choose_cpu_for_replicas(safe_rps: float, replicas: int) -> float:
+    chosen_cpu = CPU_CAPACITY_POLICY[-1][0]
+    for cpu, per_replica_capacity in CPU_CAPACITY_POLICY:
+        total_capacity = replicas * per_replica_capacity
+        if safe_rps <= total_capacity:
+            chosen_cpu = cpu
+            break
+    return min(MAX_CPU, max(MIN_CPU, chosen_cpu))
+
+
+def compute_allocation(
+    pred_series: list[float],
+    idx: int,
+    prev_cpu: float,
+    prev_replicas: int,
+) -> tuple[float, int]:
+    curr_pred = pred_series[idx]
+    lookahead_peak = get_lookahead_target(pred_series, idx)
+    safe_rps = lookahead_peak * SAFETY_MARGIN
+
+    # 기본 정책은 CPU-first다.
+    replicas = MIN_REPLICAS
+
+    # 다만 큰 피크가 곧 시작될 것으로 예측되는 구간만
+    # selective replica-first로 미리 분산 여유를 확보한다.
+    if is_peak_coming(curr_pred, lookahead_peak) or lookahead_peak >= PEAK_FLOOR_TRIGGER_RPS:
+        peak_floor = get_peak_replica_floor(lookahead_peak)
+        replicas = min(MAX_REPLICAS, max(prev_replicas, peak_floor))
+
+    chosen_cpu = choose_cpu_for_replicas(safe_rps, replicas)
+
+    # CPU 최대치에서도 부족하면 그때만 replica를 늘린다.
+    while replicas < MAX_REPLICAS:
+        max_total_capacity = replicas * CPU_CAPACITY_POLICY[-1][1]
+        if safe_rps <= max_total_capacity:
+            break
+        replicas += 1
+        chosen_cpu = choose_cpu_for_replicas(safe_rps, replicas)
+
+    # 작은 CPU 진동은 무시해서 5.0 <-> 6.0 흔들림을 줄인다.
+    if abs(chosen_cpu - prev_cpu) < 1.0:
+        chosen_cpu = prev_cpu
+
+    # scale-in은 보수적으로 수행한다.
+    if replicas < prev_replicas:
+        prior_capacity = (prev_replicas - 1) * CPU_CAPACITY_POLICY[-1][1]
+        if safe_rps > prior_capacity * 0.85:
+            replicas = prev_replicas
+
+    return chosen_cpu, replicas
 
 
 def load_schedule(csv_path: Path) -> pd.DataFrame:
@@ -157,9 +221,15 @@ def one_step_forecast_from_actual_history(df: pd.DataFrame, observed_points: int
 
 
 def build_plan(forecast_df: pd.DataFrame) -> pd.DataFrame:
+    pred_series = forecast_df["predicted_rps"].astype(float).tolist()
     rows = []
+    prev_cpu = MIN_CPU
+    prev_replicas = MIN_REPLICAS
+
     for _, row in forecast_df.iterrows():
-        cpu, replicas = compute_allocation(float(row["predicted_rps"]))
+        idx = int(row.name)
+        cpu, replicas = compute_allocation(pred_series, idx, prev_cpu, prev_replicas)
+        prev_cpu, prev_replicas = cpu, replicas
         rows.append({
             "time_sec": int(row["time_sec"]),
             "predicted_rps": round(float(row["predicted_rps"]), 3),

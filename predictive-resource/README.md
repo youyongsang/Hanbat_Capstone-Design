@@ -115,13 +115,13 @@ docker build -t reactive-server .
 ### 4.1 기존 컨테이너 정리
 
 ```bash
-docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
+docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5 app_server_6 app_server_7 app_server_8
 ```
 
 PowerShell:
 
 ```powershell
-docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5
+docker rm -f app_server_1 app_server_2 app_server_3 app_server_4 app_server_5 app_server_6 app_server_7 app_server_8
 ```
 
 ### 4.2 미래 트래픽 및 자원 계획 생성
@@ -146,6 +146,17 @@ python scripts/forecast_and_plan.py --input-csv data/input/sale_event_traffic.cs
 
 현재 구조는 이렇게 생성된 `predicted_traffic.csv`를 바탕으로 전체 `resource_allocation_plan.csv`를 먼저 수립한 뒤, 실행 단계에서 Reactive 보정 레이어가 오차를 보완하는 방식입니다.  
 따라서 트래픽 패턴이 특정 날짜나 이벤트 주기에 따라 반복적인 양상을 보일수록 예측 정확도가 높아질 수 있으며, 이에 따라 예측 기반 자원 계획의 신뢰성도 함께 향상될 수 있습니다.
+
+현재 계획 생성 로직은 단순히 `현재 시점 predicted_rps`만 사용하지 않고, `lookahead` 구간의 최대 예측값을 함께 참고하여 피크 구간을 조금 더 일찍 준비하도록 설계되어 있습니다.
+실행 단계에서는 이 계획을 그대로 현재 시각에 적용하지 않고, `PredictiveAllocator`가 약 `15초` 앞당겨 적용하여 피크 시작 직전 미리 자원을 확보하도록 동작합니다.
+
+현재 최종 기준선은 `3단계 안정화 튜닝` 버전이며, 핵심 방향은 다음과 같습니다.
+
+- 계획은 `lookahead` 기반으로 생성하고 `15초` 앞당겨 적용
+- 피크 구간은 replica floor로 선제 준비
+- 실행 중 보정은 CPU-first를 기본으로 하되, 높은 latency와 CPU 압박이 동시에 나타날 때만 replica 추가
+- scale-out은 비교적 빠르게, scale-in은 더 느리고 보수적으로 수행
+- PredictiveAllocator와 HybridController는 같은 Docker 자원을 제어하므로, lock과 hold를 사용해 충돌과 scale churn을 줄임
 
 생성 파일:
 
@@ -174,6 +185,13 @@ python .\scripts\run_hybrid.py --plan-csv .\data\output\resource_allocation_plan
 - Load Generator를 통한 실제 트래픽 발생
 - Reactive 보정 수행
 - 결과 로그 및 성능 분석용 CSV 생성
+
+실험 시 Load Generator 기준은 다음과 같습니다.
+
+| 항목 | 값 |
+|---|---:|
+| `SLA_LATENCY_MS` | `1000` |
+| `REQUEST_TIMEOUT` | `5` |
 
 로드 생성기 없이 자원 계획 및 제어 로직만 확인하려면 아래처럼 실행할 수 있습니다.
 
@@ -235,34 +253,91 @@ python .\scripts\plot_hybrid_results.py
 
 예측된 `predicted_rps`는 아래 규칙으로 자원 계획으로 변환됩니다.
 
-- `SAFETY_MARGIN = 1.60`
-- `MIN_REPLICAS = 3`, `MAX_REPLICAS = 8`
-- `MIN_CPU = 2.0`, `MAX_CPU = 6.0`
+| 항목 | 값 |
+|---|---:|
+| `SAFETY_MARGIN` | `1.60` |
+| `MIN_REPLICAS` | `3` |
+| `MAX_REPLICAS` | `7` |
+| `MIN_CPU` | `2.0` |
+| `MAX_CPU` | `6.0` |
 
-현재 정책은 `CPU 먼저, 필요 시 Replica 증가` 방식으로 동작합니다.
+현재 정책은 **기본적으로 CPU-first**로 동작하며, `lookahead` 구간 안에서 큰 피크가 곧 시작될 것으로 예측되는 경우에만 **selective replica-first**를 적용합니다.
+
+또한 피크 구간에서는 `lookahead_peak` 수준에 따라 최소 replica floor를 적용하여, CPU만 높이는 대신 피크 시작 전 분산 여유를 더 적극적으로 확보합니다. 현재 기준선은 최대 replica 수를 `7`로 제한하여 마지막 단계 확장에서 반복되던 오류 가능성을 줄이고 있습니다.
+
+`lookahead_peak` 기준 최소 replica floor:
+
+| `lookahead_peak` | 최소 replica |
+|---|---:|
+| `>= 570` | `7` |
+| `>= 520` | `6` |
+| `>= 460` | `5` |
+| `>= 400` | `4` |
 
 CPU 단계별 1개 Replica 기준 처리량:
 
-- `2.0 CPU` : `70 RPS`
-- `3.0 CPU` : `105 RPS`
-- `4.0 CPU` : `140 RPS`
-- `5.0 CPU` : `175 RPS`
-- `6.0 CPU` : `210 RPS`
+- `2.0 CPU` : `55 RPS`
+- `3.0 CPU` : `80 RPS`
+- `4.0 CPU` : `105 RPS`
+- `5.0 CPU` : `130 RPS`
+- `6.0 CPU` : `155 RPS`
 
 정책 흐름:
 
 1. 예측값에 `SAFETY_MARGIN`을 곱해 안전 여유를 적용
-2. `MIN_REPLICAS`부터 시작해서 가능한 가장 적은 Replica 수를 탐색
-3. 그 Replica 수 안에서 감당 가능한 최소 CPU 단계를 선택
-4. 모든 단계로도 부족하면 `MAX_CPU`, `MAX_REPLICAS`를 사용
+2. 현재 시점 예측값이 아니라 `lookahead` 구간의 최대 예측값을 기준으로 선제 계획 수립
+3. 기본적으로 `MIN_REPLICAS`를 유지한 상태에서 감당 가능한 최소 CPU 단계를 먼저 선택
+4. 다만 큰 피크가 임박한 구간은 `lookahead_peak`에 따른 최소 replica floor를 적용하여, replica를 1~2단계 이상 선제 증가시키는 selective replica-first 적용
+5. CPU 최대치에서도 부족하면 그때만 replica를 추가 증가
+6. 작은 CPU 변화는 무시하는 hysteresis를 적용해 `5.0 ↔ 6.0` 같은 흔들림을 줄임
 
 ### 5.3 Reactive 보정
 
-Reactive 보정 레이어는 `AllocationState`에 저장된 계획 기준선을 바탕으로 동작합니다.
+Reactive 보정 레이어는 `AllocationState`에 저장된 계획 기준선을 바탕으로 동작하며, 단일 컨테이너가 아니라 현재 활성화된 전체 컨테이너의 `/metrics`를 집계한 결과를 기준으로 emergency correction을 수행합니다.
+또한 내부 `/metrics`만으로는 실제 사용자 체감 지연을 놓칠 수 있기 때문에, 최근 `loadgen_result.csv`의 avg/p95 latency, fail 수, SLA 위반 수를 함께 참고하여 replica 증가 여부를 판단합니다.
 
-- 과부하: CPU 먼저 증가, 부족하면 replica 증가
-- 여유 상태: 계획 수준으로 복귀
+핵심 보정 파라미터:
+
+| 구분 | 항목 | 값 |
+|---|---|---:|
+| 과부하 기준 | `LATENCY_WARN_MS` | `500.0` |
+| 과부하 기준 | `P95_WARN_MS` | `750.0` |
+| 과부하 기준 | `CPU_USAGE_WARN` | `60.0` |
+| replica 추가 기준 | `LAT_REPLICA_UP_MS` | `600.0` |
+| replica 추가 기준 | `P95_REPLICA_UP_MS` | `850.0` |
+| replica 추가 기준 | `CPU_CONTAINER_OUT_THRESHOLD` | `70.0` |
+| replica 추가 기준 | `MAX_CPU_NEAR_THRESHOLD` | `5.0` |
+| 여유 기준 | `LATENCY_EASY_MS` | `250.0` |
+| 여유 기준 | `P95_EASY_MS` | `500.0` |
+| 여유 기준 | `CPU_USAGE_EASY` | `30.0` |
+
+운영/안정화 파라미터:
+
+| 항목 | 값 |
+|---|---:|
+| `CHECK_INTERVAL` | `2` |
+| `CPU_SCALE_OUT_COOLDOWN` | `5` |
+| `REPLICA_SCALE_OUT_COOLDOWN` | `10` |
+| `SCALE_IN_COOLDOWN` | `30` |
+| `OVERRIDE_HOLD_SEC` | `30` |
+| `SCALE_DOWN_HOLD_SEC` | `60` |
+| `CPU_SCALE_IN_CONFIRMATIONS` | `3` |
+| `REPLICA_SCALE_IN_CONFIRMATIONS` | `5` |
+| `PLAN_ADVANCE_SEC` | `15` |
+| `REPLICA_SCALE_DOWN_CONFIRMATIONS` | `3` |
+
+동작 방식은 다음과 같습니다.
+
+- 과부하: 평균 latency `500ms`, p95 latency `750ms`, CPU 사용률 `60%` 기준을 넘기면 CPU를 우선 증가
+- 평균 CPU뿐 아니라 **활성 컨테이너 중 최대 CPU 사용률**도 함께 확인하여, 특정 컨테이너에 병목이 몰리는 경우를 더 빨리 감지
+- CPU가 `5.0` 이상으로 높아진 상태에서 활성 컨테이너 중 최대 CPU 사용률이 높고, 평균 latency `600ms` 또는 p95 latency `850ms` 이상으로 악화되면 replica를 추가 증가
+- 여유 상태: 여러 번 연속 여유 상태가 확인될 때만 천천히 scale-in
 - 정상 상태: 유지
+
+또한 Reactive가 CPU나 replica를 증가시킨 직후에는 `override hold` 기간을 두어, 다음 Predictive 계획 tick이 방금 올린 자원을 바로 낮추지 않도록 보호합니다.
+추가로 PredictiveAllocator와 HybridController는 동일한 Docker 자원을 제어하므로, 내부적으로 동기화 lock과 `60초` scale-down hold를 사용하여 동시 제어 충돌과 과도한 scale churn을 줄이도록 구성되어 있습니다. replica scale-out은 CPU scale-out보다 더 긴 cooldown을 사용하며, replica scale-down은 더 많은 연속 확인과 더 긴 cooldown 이후에만 반영되도록 하여 흔들림을 줄였습니다.
+
+즉 Reactive baseline과 Predictive-Hybrid는 동일한 보정 기준 위에서 비교되며, 두 방식의 핵심 차이는 **보정 임계값**이 아니라 **피크 전에 얼마나 빨리 준비하느냐**에 있습니다.
 
 ---
 

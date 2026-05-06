@@ -1,6 +1,7 @@
 import csv
 import time
 import subprocess
+import threading
 from pathlib import Path
 
 
@@ -9,8 +10,11 @@ DEFAULT_PLAN_CSV = BASE_DIR / "data" / "output" / "resource_allocation_plan.csv"
 OUTPUT_CSV = BASE_DIR / "data" / "output" / "predictive_allocation_log.csv"
 
 MIN_REPLICAS = 3
-MAX_REPLICAS = 8
+MAX_REPLICAS = 7
 MIN_CPU = 2.0
+PLAN_ADVANCE_SEC = 15
+SCALE_DOWN_HOLD_SEC = 60
+REPLICA_SCALE_DOWN_CONFIRMATIONS = 3
 
 IMAGE_NAME = "reactive-server"
 CONTAINER_PREFIX = "app_server_"
@@ -102,15 +106,27 @@ def append_csv(row: list):
 
 class AllocationState:
     def __init__(self):
+        self.planned_cpu: float = MIN_CPU
+        self.planned_replicas: int = MIN_REPLICAS
         self.current_cpu: float = MIN_CPU
         self.current_replicas: int = MIN_REPLICAS
         self.predicted_rps: float = 0.0
         self.last_updated: float = 0.0
+        self.override_until: float = 0.0
+        self.scale_down_hold_until: float = 0.0
+        self.op_lock = threading.Lock()
+        self.replica_scale_down_candidate: int | None = None
+        self.replica_scale_down_count: int = 0
 
-    def update(self, cpu: float, replicas: int, pred_rps: float):
+    def update_plan(self, cpu: float, replicas: int, pred_rps: float):
+        self.planned_cpu = cpu
+        self.planned_replicas = replicas
+        self.predicted_rps = pred_rps
+        self.last_updated = time.time()
+
+    def update_current(self, cpu: float, replicas: int):
         self.current_cpu = cpu
         self.current_replicas = replicas
-        self.predicted_rps = pred_rps
         self.last_updated = time.time()
 
 
@@ -147,51 +163,94 @@ class PredictiveAllocator:
                 })
         return rows
 
+    def _confirm_replica_scale_down(self, target_replicas: int) -> int:
+        if target_replicas >= self.state.current_replicas:
+            self.state.replica_scale_down_candidate = None
+            self.state.replica_scale_down_count = 0
+            return target_replicas
+
+        if self.state.replica_scale_down_candidate != target_replicas:
+            self.state.replica_scale_down_candidate = target_replicas
+            self.state.replica_scale_down_count = 1
+            return self.state.current_replicas
+
+        self.state.replica_scale_down_count += 1
+        if self.state.replica_scale_down_count < REPLICA_SCALE_DOWN_CONFIRMATIONS:
+            return self.state.current_replicas
+
+        self.state.replica_scale_down_candidate = None
+        self.state.replica_scale_down_count = 0
+        return target_replicas
+
     def run(self):
         init_csv()
         start_time = time.time()
 
         print("[PredictiveAllocator] 계획 기반 선제 할당 시작")
-        apply_allocation(MIN_REPLICAS, MIN_CPU)
-        self.state.update(MIN_CPU, MIN_REPLICAS, 0.0)
+        with self.state.op_lock:
+            apply_allocation(MIN_REPLICAS, MIN_CPU)
+        self.state.update_plan(MIN_CPU, MIN_REPLICAS, 0.0)
+        self.state.update_current(MIN_CPU, MIN_REPLICAS)
 
         for row in self.plan:
             target_sec = row["time_sec"]
             pred_rps = row["predicted_rps"]
             cpu = row["planned_cpu"]
             replicas = row["planned_replicas"]
+            effective_sec = max(0, target_sec - PLAN_ADVANCE_SEC)
 
             while True:
-                if time.time() - start_time >= target_sec:
+                if time.time() - start_time >= effective_sec:
                     break
                 time.sleep(0.05)
 
             elapsed = time.time() - start_time
             action = "HOLD"
+            target_cpu = cpu
+            target_replicas = replicas
+            self.state.update_plan(cpu, replicas, pred_rps)
 
-            if cpu != self._prev_cpu or replicas != self._prev_reps:
+            # Reactive 보정이 살아 있는 동안에는 predictive 계획이
+            # 현재 상태보다 낮은 값으로 즉시 되돌리지 못하게 한다.
+            if time.time() < self.state.override_until:
+                if target_cpu < self.state.current_cpu:
+                    target_cpu = self.state.current_cpu
+                if target_replicas < self.state.current_replicas:
+                    target_replicas = self.state.current_replicas
+
+            # scale-out 직후에는 계획이 replica를 너무 빨리 다시 낮추지 못하게 한다.
+            if time.time() < self.state.scale_down_hold_until:
+                if target_replicas < self.state.current_replicas:
+                    target_replicas = self.state.current_replicas
+            else:
+                target_replicas = self._confirm_replica_scale_down(target_replicas)
+
+            if target_cpu != self._prev_cpu or target_replicas != self._prev_reps:
                 try:
-                    apply_allocation(replicas, cpu)
+                    with self.state.op_lock:
+                        apply_allocation(target_replicas, target_cpu)
                     action = "APPLY"
-                    self._prev_cpu = cpu
-                    self._prev_reps = replicas
+                    if target_replicas > self._prev_reps or target_cpu > self._prev_cpu:
+                        self.state.scale_down_hold_until = time.time() + SCALE_DOWN_HOLD_SEC
+                    self._prev_cpu = target_cpu
+                    self._prev_reps = target_replicas
                 except Exception as e:
                     print(f"  [ERROR] Docker 적용 실패: {e}")
                     action = "ERROR"
 
-            self.state.update(cpu, replicas, pred_rps)
+            self.state.update_current(target_cpu, target_replicas)
 
             print(
-                f"[PLAN] t={target_sec:>4}s | "
-                f"pred={pred_rps:>6.1f} | cpu={cpu} | replicas={replicas} | {action}"
+                f"[PLAN] t={target_sec:>4}s (apply@{effective_sec:>4}s) | "
+                f"pred={pred_rps:>6.1f} | cpu={target_cpu} | replicas={target_replicas} | {action}"
             )
             append_csv([
                 time.strftime("%Y-%m-%d %H:%M:%S"),
                 round(elapsed, 2),
                 target_sec,
                 round(pred_rps, 2),
-                cpu,
-                replicas,
+                target_cpu,
+                target_replicas,
                 action,
             ])
 
