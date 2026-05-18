@@ -1,0 +1,442 @@
+한밭대학교 캡스톤디자인
+Predictive vs Reactive 실험 정리
+최종 업데이트: 2026-05-06
+
+=======================================================
+1. 프로젝트 목표
+=======================================================
+
+목표:
+- 동일한 트래픽 CSV 조건에서 reactive-resource와 predictive-resource를 비교
+- predictive-resource가 다음 중 하나를 달성할 수 있는지 확인
+  1. 비슷한 서비스 품질을 유지하면서 자원을 덜 사용하는지
+  2. 피크 구간에서 더 일찍 준비하여 품질을 개선할 수 있는지
+
+현재 해석:
+- 품질 기준으로는 Reactive가 더 강한 baseline임
+- Predictive는 평균 자원 효율 측면의 가능성을 보였지만, 피크 구간 품질에서는 Reactive를 안정적으로 넘지 못함
+- 향후에는 수동 규칙 기반 튜닝보다 강화학습 기반 정책으로 확장할 필요가 있음
+
+
+=======================================================
+2. 공통 실험 조건
+=======================================================
+
+입력 트래픽:
+- data/input/sale_event_traffic.csv
+
+실행 구조:
+- Reactive:
+  - load generator가 실제 트래픽 발생
+  - controller가 실시간 metrics를 보고 CPU/컨테이너 수를 반응형으로 조절
+- Predictive-Hybrid:
+  - LSTM 예측 결과로 predicted_traffic.csv 생성
+  - forecast_and_plan.py가 resource_allocation_plan.csv 생성
+  - PredictiveAllocator가 계획을 시간축에 맞춰 선제 적용
+  - HybridController가 실행 중 reactive fallback 보정 수행
+
+Load Generator 실험 기준:
+- SLA_LATENCY_MS = 1000
+- REQUEST_TIMEOUT = 5
+
+핵심 평가 지표:
+- 품질:
+  - avg latency
+  - p95 latency
+  - SLA violation count / rate
+  - fail count / rate
+- 효율:
+  - 평균 활성 replica 수
+  - replica-time
+  - CPU-time
+- 안정성:
+  - ERROR count
+  - max p95 spike
+  - 재실행 시 결과 편차
+
+
+=======================================================
+3. Reactive 기준선 조정 이력
+=======================================================
+
+Reactive baseline은 비교 실험이 공정하도록 별도 조정하였다.
+
+조정 이유:
+- 너무 낮은 threshold는 Reactive가 거의 predictive처럼 너무 빨리 반응하게 만듦
+- 너무 높은 threshold는 Reactive가 지나치게 늦게 반응하게 만들어 baseline을 약하게 만듦
+- 따라서 실제 성능 저하를 관측한 뒤 대응하되, 피크 구간에서는 충분히 scale-out 가능하도록 기준을 다시 맞춤
+
+Reactive load generator 기준:
+- SLA_LATENCY_MS = 1000
+- REQUEST_TIMEOUT = 5
+
+Reactive controller 최종 비교 기준:
+- Scale-out:
+  - avg latency threshold = 500ms
+  - p95 latency threshold = 750ms
+  - CPU usage threshold = 60%
+  - CPU가 높은 상태에서 container/replica 증가 threshold = 70%
+- Scale-in:
+  - avg latency threshold = 250ms
+  - p95 latency threshold = 500ms
+  - CPU usage threshold = 30%
+
+해석:
+- Reactive는 공정하면서도 강한 baseline으로 정리됨
+- 최종 비교에서 Reactive는 대체로
+  - 낮은 fail count
+  - 낮은 SLA violation
+  - 낮은 max p95
+  - 더 좋은 피크 구간 품질
+를 보였음
+- 대신 평균 자원 사용량은 Predictive보다 다소 높게 나타나는 경우가 많았음
+
+
+=======================================================
+4. Predictive 실험 단계별 변화
+=======================================================
+
+-------------------------------------------------------
+4.1 초기 Predictive-Hybrid 단계
+-------------------------------------------------------
+
+초기 구조:
+- 예측 기반 계획 생성
+- 계획을 먼저 적용
+- 실행 중 HybridController가 reactive 보정 수행
+
+관찰된 문제:
+- REP_UP이 거의 발생하지 않음
+- 사실상 CPU 위주 보정에 의존
+- 피크 구간 SLA 위반과 p95가 큼
+- Predictive가 Reactive보다 더 좋다고 보기 어려움
+
+해석:
+- 구조 자체는 동작했지만, plan과 fallback이 피크 대응에 충분히 강하지 않았음
+
+
+-------------------------------------------------------
+4.2 성능 우선 공격적 튜닝
+-------------------------------------------------------
+
+목표:
+- 피크 구간 latency/SLA 위반을 줄이기 위해 Predictive를 더 공격적으로 동작시킴
+
+주요 변경:
+- lookahead 기반 계획 강화
+- peak replica floor 확대
+- CPU-first 정책을 일부 피크 구간에서 완화
+- reactive fallback을 더 공격적으로 조정
+- loadgen 결과를 보정 판단에 반영
+
+관찰 결과:
+- 피크 구간 latency/SLA는 개선되는 경우가 있었음
+- REP_UP이 실제로 발생하기 시작함
+- 그러나 동시에
+  - 과도한 scale-out
+  - fail_count 증가
+  - ERROR 발생
+  - 확장/축소 흔들림(churn)
+이 나타남
+
+해석:
+- 성능은 좋아졌지만 안정성이 무너지는 단계였음
+
+
+-------------------------------------------------------
+4.3 3단계 안정화 튜닝 (대표 기준선)
+-------------------------------------------------------
+
+이 단계가 최종 발표/보고서용 대표 Predictive 기준선으로 가장 적합했음.
+
+설계 목표:
+- 성능 우선 튜닝의 장점을 최대한 유지
+- ERROR, fail, scale churn 감소
+- plan과 controller가 안전하게 협력하도록 구조 개선
+
+핵심 구조 변경:
+- PredictiveAllocator와 HybridController 사이 shared lock 추가
+  - 동일한 Docker 자원을 동시에 조작하지 않도록 방지
+- scale_down_hold 도입
+  - reactive가 올린 자원을 plan이 바로 내리지 못하게 보호
+- replica scale-down confirmation 도입
+  - scale churn 완화
+- CPU scale-out과 replica scale-out cooldown 분리
+- MAX_REPS를 8에서 7로 낮춤
+  - 7→8 확장 구간에서 발생하던 불안정성 방지
+
+이 단계의 대표 파라미터:
+
+Plan / allocator:
+- PLAN_ADVANCE_SEC = 15
+- SAFETY_MARGIN = 1.60
+- MIN_REPLICAS = 3
+- MAX_REPLICAS = 7
+- MIN_CPU = 2.0
+- MAX_CPU = 6.0
+- SCALE_DOWN_HOLD_SEC = 60
+- REPLICA_SCALE_DOWN_CONFIRMATIONS = 3
+
+Lookahead / peak floor:
+- LOOKAHEAD_SEC = 30
+- lookahead_peak >= 400 -> 최소 4 replicas
+- lookahead_peak >= 460 -> 최소 5 replicas
+- lookahead_peak >= 520 -> 최소 6 replicas
+- lookahead_peak >= 570 -> 최소 7 replicas
+
+Replica 1개당 CPU 단계별 처리량 가정:
+- 2.0 CPU -> 55 RPS
+- 3.0 CPU -> 80 RPS
+- 4.0 CPU -> 105 RPS
+- 5.0 CPU -> 130 RPS
+- 6.0 CPU -> 155 RPS
+
+Predictive HybridController:
+- LATENCY_WARN_MS = 500
+- P95_WARN_MS = 750
+- CPU_USAGE_WARN = 60
+- LATENCY_EASY_MS = 250
+- P95_EASY_MS = 500
+- CPU_USAGE_EASY = 30
+- CPU_CONTAINER_OUT_THRESHOLD = 70
+- P95_REPLICA_UP_MS = 850
+- LAT_REPLICA_UP_MS = 600
+- MAX_CPU_NEAR_THRESHOLD = 5.0
+- MIN_REPS = 3
+- MAX_REPS = 7
+- CHECK_INTERVAL = 2
+- CPU_SCALE_OUT_COOLDOWN = 5
+- REPLICA_SCALE_OUT_COOLDOWN = 10
+- SCALE_IN_COOLDOWN = 30
+- OVERRIDE_HOLD_SEC = 30
+- SCALE_DOWN_HOLD_SEC = 60
+- CPU_SCALE_IN_CONFIRMATIONS = 3
+- REPLICA_SCALE_IN_CONFIRMATIONS = 5
+
+이 단계에서의 핵심 동작:
+- 계획은 15초 앞당겨 적용
+- 내부 /metrics뿐 아니라 최근 loadgen_result.csv도 보고 보정 수행
+- 기본 보정은 CPU-first
+- CPU가 충분히 높고 latency/p95/fail/SLA 신호가 함께 나빠질 때만 replica 추가
+- scale-in은 의도적으로 더 느리고 보수적으로 수행
+
+관찰 결과:
+- ERROR가 0회까지 줄어드는 경우가 많았음
+- 공격적 단계 대비 fail_count 감소
+- 성능과 안정성의 균형이 가장 좋았음
+
+해석:
+- 품질, 안정성, 자원 효율 사이의 타협점으로 가장 적절한 단계였음
+
+
+-------------------------------------------------------
+4.4 이후 보완 실험들
+-------------------------------------------------------
+
+이후 실험들은 대표 기준선이 아니라 보완/탐색 실험으로 보는 것이 적절함.
+
+실험 A: 피크 구간 더 강한 준비
+- PLAN_ADVANCE_SEC를 15 -> 20으로 증가
+- peak floor를 더 공격적으로 조정
+- 피크 전용 reactive 기준 일부 완화
+
+관찰 결과:
+- avg latency가 약간 좋아지는 run도 있었음
+- 그러나
+  - 피크 구간 SLA가 안정적으로 줄지 않았고
+  - max p95가 오히려 나빠지는 경우도 있었음
+
+해석:
+- 미세한 threshold 조정만으로는 명확한 개선을 만들기 어려운 단계에 도달함
+
+실험 B: 피크/비피크 분리 정책
+- 피크 모드와 일반 모드를 나눔
+- 비피크 구간의 replica 확장을 더 보수적으로 조정
+
+관찰 결과:
+- max p95나 fail이 좋아지는 경우가 있었음
+- 하지만 피크 구간 SLA/p95는 다시 나빠질 수 있었음
+
+해석:
+- 전체 안정성은 좋아졌지만, 프로젝트 핵심인 피크 대응 품질은 약해질 수 있었음
+
+실험 C: MAX_REPS = 8 비교 실험
+- 다른 파라미터는 유지하고 최대 replica만 8로 확장
+  - forecast_and_plan.py MAX_REPLICAS 7 -> 8
+  - predictive_allocator.py MAX_REPLICAS 7 -> 8
+  - hybrid_controller.py MAX_REPS 7 -> 8
+
+관찰 결과:
+- 7 -> 8 확장이 실제로 ERROR 없이 동작함
+- 평균 품질은 일부 개선됨
+  - fail 감소
+  - SLA violation 감소
+  - avg latency 감소
+  - avg p95 감소
+- 그러나
+  - 평균 활성 replica 수 증가
+  - replica-time 증가
+  - max p95는 여전히 크게 나타남
+  - 피크 구간 품질이 압도적으로 좋아진 것은 아님
+
+해석:
+- MAX=8은 품질을 조금 더 살 수 있는 설정이지만, Predictive의 핵심 장점인 자원 효율성은 약화됨
+- 따라서 비교용 실험으로는 의미가 있지만 대표 기준선으로 채택하기는 부적절
+
+
+=======================================================
+5. Predictive가 Reactive보다 약했던 이유
+=======================================================
+
+주요 원인:
+
+1. Reactive는 실제 성능 저하를 직접 보고 바로 반응함
+- latency와 CPU 압박을 실시간으로 확인하고 즉시 scale-out
+
+2. Predictive는 forecast-plan-runtime 사이의 틈이 존재함
+- 예측 오차가 조금만 생겨도, 그 짧은 구간에서 under-provisioning이 발생
+- 이때 요청 큐잉과 p95 spike가 생김
+
+3. tail latency가 평균보다 더 크게 문제 됨
+- Predictive는 평균 latency는 나쁘지 않은 경우가 있었지만,
+  max p95와 SLA 위반은 Reactive보다 나쁜 경우가 많았음
+
+4. Reactive baseline 자체가 이미 강했음
+- 튜닝 이후 Reactive는 품질 기준에서 상당히 잘 동작하는 baseline이 되었음
+- 단순 규칙 기반 Predictive가 이를 넘기기 어려웠음
+
+5. 재실행 편차 존재
+- 동일한 3단계 파라미터로 다시 돌려도 결과 차이가 발생
+- 호스트 부하, Docker 상태, 스케줄링 차이 등 실행 환경 영향이 큼
+
+
+=======================================================
+6. Predictive 실험이 갖는 의미
+=======================================================
+
+현재 결과로 주장 가능한 점:
+- 예측 기반 자원 할당 파이프라인이 end-to-end로 구현되고 실제 동작함
+- Predictive는 평균 자원 사용량을 조금 줄일 가능성을 보임
+- 일부 run에서는 평균 latency도 좋게 나옴
+- 선제 준비 구조 자체는 실험적으로 검증됨
+
+현재 결과로 강하게 주장하기 어려운 점:
+- Predictive가 Reactive보다 피크 품질에서 더 좋다
+- Predictive가 항상 더 안정적이다
+- Predictive가 tail latency spike를 해결했다
+
+현재 가장 자연스러운 해석:
+- Reactive는 품질 기준에서 더 강한 baseline
+- Predictive는 평균 효율과 선제 대응 가능성을 확인한 수준
+- 현재 규칙 기반 정책만으로는 Reactive를 안정적으로 넘기기 어려움
+
+
+=======================================================
+7. 연구 가치
+=======================================================
+
+비록 Predictive가 Reactive를 확실히 이기지 못했더라도 연구 가치는 충분함.
+
+이유:
+- 예측 기반 자원 할당 구조를 실제로 구현함
+- 규칙 기반 Predictive가 어느 지점에서 한계가 드러나는지 실험적으로 확인함
+- 품질 / 안정성 / 효율 사이의 trade-off를 명확히 관찰함
+- 다음 단계인 강화학습 기반 정책으로 넘어가야 할 이유를 구체적으로 제시함
+
+자연스러운 연구 흐름:
+1. Reactive는 강한 baseline이었다
+2. 단순 규칙 기반 Predictive는 이를 안정적으로 넘지 못했다
+3. 따라서 hand-tuned rule이 아닌 더 나은 정책 학습이 필요하다
+4. 다음 단계로 RL 기반 정책이 적절하다
+
+
+=======================================================
+8. 발표용 핵심 정리 방향
+=======================================================
+
+추천 메인 메시지:
+- Reactive는 품질 기준에서 더 우수한 baseline이었다
+- Predictive는 평균 자원 효율과 선제 대응 구조의 가능성을 보여주었다
+- 규칙 기반 Predictive는 피크 품질에서 Reactive를 안정적으로 넘지 못했다
+- 따라서 향후에는 강화학습 기반 정책으로 고도화할 필요가 있다
+
+대표 Predictive 결과:
+- 3단계 안정화 튜닝 버전 (MAX_REPS = 7)
+
+MAX_REPS = 8 실험의 위치:
+- 보완 실험
+- 품질 향상 가능성은 보였지만 효율성은 약화
+- 대표 결과보다는 비교용 참고 결과로 제시하는 것이 적절
+
+최종 결론 방향:
+- 현재 Predictive는 Reactive보다 전반적으로 더 좋다고 말하기 어렵다
+- 그러나 선제 자원 할당 구조와 평균 효율 가능성은 확인되었다
+- 다음 단계로 RL 기반 정책이 필요하다는 근거가 실험적으로 확보되었다
+
+
+=======================================================
+9. 현재 대표 Predictive 기준선 최종 파라미터
+=======================================================
+
+현재 대표 기준선:
+
+forecast_and_plan.py
+- SAFETY_MARGIN = 1.60
+- MIN_REPLICAS = 3
+- MAX_REPLICAS = 7
+- MIN_CPU = 2.0
+- MAX_CPU = 6.0
+- LOOKAHEAD_SEC = 30
+- PEAK_THRESHOLD_RPS = 500.0
+- PEAK_SLOPE_THRESHOLD = 60.0
+- PEAK_FLOOR_TRIGGER_RPS = 400.0
+- CPU_CAPACITY_POLICY:
+  - 2.0 -> 55
+  - 3.0 -> 80
+  - 4.0 -> 105
+  - 5.0 -> 130
+  - 6.0 -> 155
+- PEAK_REPLICA_FLOORS:
+  - 570 -> 7
+  - 520 -> 6
+  - 460 -> 5
+  - 400 -> 4
+
+predictive_allocator.py
+- MAX_REPLICAS = 7
+- PLAN_ADVANCE_SEC = 15
+- SCALE_DOWN_HOLD_SEC = 60
+- REPLICA_SCALE_DOWN_CONFIRMATIONS = 3
+
+hybrid_controller.py
+- LATENCY_WARN_MS = 500
+- P95_WARN_MS = 750
+- CPU_USAGE_WARN = 60
+- LATENCY_EASY_MS = 250
+- P95_EASY_MS = 500
+- CPU_USAGE_EASY = 30
+- CPU_CONTAINER_OUT_THRESHOLD = 70
+- P95_REPLICA_UP_MS = 850
+- LAT_REPLICA_UP_MS = 600
+- MAX_CPU_NEAR_THRESHOLD = 5.0
+- MIN_REPS = 3
+- MAX_REPS = 7
+- CHECK_INTERVAL = 2
+- CPU_SCALE_OUT_COOLDOWN = 5
+- REPLICA_SCALE_OUT_COOLDOWN = 10
+- SCALE_IN_COOLDOWN = 30
+- OVERRIDE_HOLD_SEC = 30
+- SCALE_DOWN_HOLD_SEC = 60
+- CPU_SCALE_IN_CONFIRMATIONS = 3
+- REPLICA_SCALE_IN_CONFIRMATIONS = 5
+
+hybrid_load_generator.py
+- REQUEST_TIMEOUT = 5
+- SLA_LATENCY_MS = 1000
+
+
+=======================================================
+10. 최종 한 줄 요약
+=======================================================
+
+Reactive는 현재 품질 기준에서 더 강한 baseline이며, Predictive-Hybrid는 선제 자원 할당 구조와 평균 효율 가능성은 보여주었지만, Reactive를 안정적으로 넘기기 위해서는 향후 강화학습 기반 정책으로의 확장이 필요하다.
