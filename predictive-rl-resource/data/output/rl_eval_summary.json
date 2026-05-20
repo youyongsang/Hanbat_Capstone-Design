@@ -1,21 +1,21 @@
 {
   "steps": 1001,
-  "total_reward": -4638764.423,
-  "avg_latency_ms": 5392.481,
-  "avg_p95_latency_ms": 19180.459,
-  "max_p95_latency_ms": 59745.496,
-  "total_fail_count": 119655,
-  "total_sla_violation_count": 147401,
-  "avg_replicas": 3.0,
-  "replica_time": 3003,
-  "avg_cpu": 2.0,
-  "cpu_time": 2002.0,
-  "peak_avg_latency_ms": 13038.868,
-  "peak_avg_p95_latency_ms": 47725.336,
-  "peak_total_fail_count": 18225,
-  "peak_total_sla_violation_count": 17216,
-  "peak_avg_replicas": 3.0,
+  "total_reward": -18187.946,
+  "avg_latency_ms": 277.77,
+  "avg_p95_latency_ms": 393.364,
+  "max_p95_latency_ms": 635.233,
+  "total_fail_count": 0,
+  "total_sla_violation_count": 0,
+  "avg_replicas": 5.359,
+  "replica_time": 5364,
+  "avg_cpu": 4.383,
+  "cpu_time": 4387.0,
+  "peak_avg_latency_ms": 315.347,
+  "peak_avg_p95_latency_ms": 464.224,
+  "peak_total_fail_count": 0,
+  "peak_total_sla_violation_count": 0,
+  "peak_avg_replicas": 6.617,
   "action_counts": {
-    "0": 1001
+    "3": 1001
   }
 }

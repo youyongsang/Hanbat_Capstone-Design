@@ -36,6 +36,8 @@ from config import (
     PEAK_CPU_COST_MULTIPLIER,
     PEAK_BONUS_THRESHOLD_RPS,
     PEAK_PROTECTION_BONUS,
+    PEAK_UNDER_REPLICATION_CPU_PENALTY,
+    PEAK_UNDER_REPLICATION_PENALTY,
     PEAK_REPLICA_COST_MULTIPLIER,
     REPLICA_COST_PENALTY,
     SCALE_DOWN_CPU_BONUS,
@@ -67,8 +69,8 @@ class ResourceAllocationEnv(gym.Env):
 
         self.action_space = spaces.Discrete(6)
         self.observation_space = spaces.Box(
-            low=np.array([0, 0, 0, 0, 0, 0, 0, 0, MIN_CPU, MIN_REPLICAS, -1000, -1000, -8000, -8000], dtype=np.float32),
-            high=np.array([1000, 1000, 1000, 100, 12000, 20000, 4000, 4000, MAX_CPU, MAX_REPLICAS, 1000, 1000, 12000, 12000], dtype=np.float32),
+            low=np.array([0, 0, 0, 0, 0, 0, 0, 0, MIN_CPU, MIN_REPLICAS, MIN_CPU, MIN_REPLICAS, -1000, -1000, -8000, -8000], dtype=np.float32),
+            high=np.array([1000, 1000, 1000, 100, 12000, 20000, 4000, 4000, MAX_CPU, MAX_REPLICAS, MAX_CPU, MAX_REPLICAS, 1000, 1000, 12000, 12000], dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -103,9 +105,11 @@ class ResourceAllocationEnv(gym.Env):
         self.prev_p95_latency = 0.0
         self.warmup_steps_left = 0
         self.last_action = ACTION_HOLD
-        self.prev_cpu_alloc = MIN_CPU
-        self.prev_replica_alloc = MIN_REPLICAS
         first = self.schedule_df.iloc[self.step_idx]
+        self.current_cpu = float(first.get("teacher_cpu", MIN_CPU))
+        self.current_replicas = int(round(float(first.get("teacher_replicas", MIN_REPLICAS))))
+        self.prev_cpu_alloc = self.current_cpu
+        self.prev_replica_alloc = self.current_replicas
         self.last_result = simulate_service_step(
             actual_rps=float(first["actual_rps"]),
             predicted_rps=float(first["predicted_rps"]),
@@ -122,7 +126,7 @@ class ResourceAllocationEnv(gym.Env):
 
         self.prev_avg_latency = self.last_result.avg_latency_ms
         self.prev_p95_latency = self.last_result.p95_latency_ms
-        self._apply_action(int(action))
+        self._apply_action(int(action), current)
         self.last_action = int(action)
         result = simulate_service_step(
             actual_rps=float(current["actual_rps"]),
@@ -163,25 +167,33 @@ class ResourceAllocationEnv(gym.Env):
 
         return next_obs, reward, terminated, False, info
 
-    def _apply_action(self, action: int):
+    def _apply_action(self, action: int, row):
         prev_cpu = self.current_cpu
         prev_replicas = self.current_replicas
         self.prev_cpu_alloc = prev_cpu
         self.prev_replica_alloc = prev_replicas
+
+        teacher_cpu = float(row.get("teacher_cpu", MIN_CPU))
+        teacher_replicas = int(round(float(row.get("teacher_replicas", MIN_REPLICAS))))
+        target_cpu = teacher_cpu
+        target_replicas = teacher_replicas
+
         if action == ACTION_CPU_UP:
-            self.current_cpu = min(MAX_CPU, self.current_cpu + CPU_STEP)
+            target_cpu = min(MAX_CPU, teacher_cpu + CPU_STEP)
         elif action == ACTION_CPU_DOWN:
-            self.current_cpu = max(MIN_CPU, self.current_cpu - CPU_STEP)
+            target_cpu = max(MIN_CPU, teacher_cpu - CPU_STEP)
         elif action == ACTION_REP_UP:
-            self.current_replicas = min(MAX_REPLICAS, self.current_replicas + 1)
+            target_replicas = min(MAX_REPLICAS, teacher_replicas + 1)
         elif action == ACTION_REP_DOWN:
-            self.current_replicas = max(MIN_REPLICAS, self.current_replicas - 1)
+            target_replicas = max(MIN_REPLICAS, teacher_replicas - 1)
         elif action == ACTION_CPU_AND_REP_UP:
-            self.current_cpu = min(MAX_CPU, self.current_cpu + CPU_STEP)
-            self.current_replicas = min(MAX_REPLICAS, self.current_replicas + 1)
+            target_cpu = min(MAX_CPU, teacher_cpu + CPU_STEP)
+            target_replicas = min(MAX_REPLICAS, teacher_replicas + 1)
         elif action == ACTION_HOLD:
             pass
 
+        self.current_cpu = target_cpu
+        self.current_replicas = target_replicas
         if self.current_cpu > prev_cpu or self.current_replicas > prev_replicas:
             self.warmup_steps_left = WARMUP_PENALTY_STEPS
 
@@ -189,6 +201,8 @@ class ResourceAllocationEnv(gym.Env):
         current_rps = float(row["actual_rps"])
         predicted_rps = float(row["predicted_rps"])
         lookahead_peak_rps = float(row.get("lookahead_peak_rps", predicted_rps))
+        teacher_cpu = float(row.get("teacher_cpu", self.current_cpu))
+        teacher_replicas = float(row.get("teacher_replicas", self.current_replicas))
         gap = float(row.get("rps_gap", predicted_rps - current_rps))
         delta_rps = float(row.get("delta_actual_rps", 0.0))
         delta_avg_latency = self.last_result.avg_latency_ms - self.prev_avg_latency
@@ -205,6 +219,8 @@ class ResourceAllocationEnv(gym.Env):
                 self.last_result.sla_violation_count,
                 self.current_cpu,
                 self.current_replicas,
+                teacher_cpu,
+                teacher_replicas,
                 gap,
                 delta_rps,
                 delta_avg_latency,
@@ -243,6 +259,10 @@ class ResourceAllocationEnv(gym.Env):
             reward += LOW_TAIL_BONUS
         if peak_mode and self.current_replicas >= 5:
             reward += PEAK_PROTECTION_BONUS
+        if peak_mode and self.current_replicas + 0.5 < teacher_replicas:
+            reward -= PEAK_UNDER_REPLICATION_PENALTY * (teacher_replicas - self.current_replicas)
+        if peak_mode and self.current_cpu + (CPU_STEP / 2) < teacher_cpu:
+            reward -= PEAK_UNDER_REPLICATION_CPU_PENALTY * max(0.0, teacher_cpu - self.current_cpu)
         if abs(self.current_cpu - teacher_cpu) <= 0.5 and abs(self.current_replicas - teacher_replicas) <= 1.0:
             reward += TEACHER_ALIGNMENT_BONUS
             if peak_mode:

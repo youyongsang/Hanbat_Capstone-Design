@@ -19,6 +19,7 @@ LSTM 기반 트래픽 예측 결과를 입력으로 사용하고, 강화학습(R
 → LSTM 예측 (predictive-resource)
 → predicted_traffic.csv
 → RL 환경(state/action/reward)
+→ baseline imitation warm-start
 → PPO 학습
 → 학습된 정책으로 RL 계획 CSV 생성
 → 나중에 실제 Docker 실행 환경에 연결 가능
@@ -30,6 +31,8 @@ LSTM 기반 트래픽 예측 결과를 입력으로 사용하고, 강화학습(R
 - **RL**: CPU / Replica 행동 결정 담당
 
 RL은 LSTM을 대체하는 것이 아니라, **예측 결과를 자원 정책으로 바꾸는 계층**입니다.
+현재 학습은 가능한 경우 기존 rule-based Predictive baseline을 teacher로 삼아
+**모방 학습(behavior cloning warm-start)** 을 먼저 수행한 뒤 PPO로 미세 조정합니다.
 
 ---
 
@@ -131,14 +134,14 @@ RL 에이전트는 아래 상태를 입력받습니다.
 
 ### 4.2 행동(action)
 
-이산 행동 6개:
+이산 행동 6개이며, **절대 자원값을 직접 올리고 내리는 것이 아니라 baseline 계획 대비 offset**을 선택합니다.
 
-- `0 = HOLD`
-- `1 = CPU_UP`
-- `2 = CPU_DOWN`
-- `3 = REP_UP`
-- `4 = REP_DOWN`
-- `5 = CPU_AND_REP_UP`
+- `0 = baseline 그대로 유지`
+- `1 = baseline CPU +0.5`
+- `2 = baseline CPU -0.5`
+- `3 = baseline replica +1`
+- `4 = baseline replica -1`
+- `5 = baseline CPU +0.5, replica +1`
 
 ### 4.3 보상(reward)
 
@@ -190,10 +193,27 @@ python -m pip install -r .\predictive-rl-resource\requirements.txt
 - `data/reference/loadgen_result.csv`
 - `data/reference/hybrid_correction_log.csv`
 
+특히 `resource_allocation_plan.csv`와 `loadgen_result.csv`는 teacher imitation warm-start에 직접 사용됩니다.
+
 ### 6.2 RL 학습
+
+기본 학습 순서:
+
+1. reference plan / loadgen 결과에서 teacher dataset 생성
+2. sparse한 teacher action 분포를 고려한 weighted imitation warm-start 수행
+3. correction log를 teacher signal에 함께 반영해 `REP_UP` 계열 행동을 더 직접적으로 학습
+4. curriculum(`easy → peak → full`) 기반 PPO fine-tuning
+
+기본 명령:
 
 ```powershell
 python .\predictive-rl-resource\scripts\train_rl.py
+```
+
+imitation warm-start 없이 PPO만 바로 학습하려면:
+
+```powershell
+python .\predictive-rl-resource\scripts\train_rl.py --no-imitation
 ```
 
 생성 결과:
